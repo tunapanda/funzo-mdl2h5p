@@ -102,15 +102,17 @@ def download_video(url,basedir,content_type="files"):
 import uuid
 import shutil
 
-# TODO: These would make more sense implemented as functions instead of classes.
-class H5PCoursePresentation(object):
-    def __init__(self,section,baseDir,auto_save=True,force_fresh=False):
+class _H5PContent(object):
+    def __init__(self,section,baseDir,auto_save=False,force_fresh=False):
         self._content_dict = None
-        self.mdlobj     = section
+        self.src     = section
         self.baseDir    = baseDir
         self.contentDir = os.path.join(self.baseDir,"content")
         if auto_save:
             self.save(force_fresh=force_fresh)
+        
+    def __repr__(self):
+        return self.content_json
         
     def save(self,force_fresh=False):
         if os.path.exists(self.baseDir) and force_fresh:
@@ -120,7 +122,7 @@ class H5PCoursePresentation(object):
             print "XXX copying template to %s" % self.baseDir
             copy(h5p_template_dirs["CoursePresentation"],self.baseDir)
         print "XXX Downloading media..."
-        self.mdlobj.fetch_media(self.baseDir,recursive=True)
+        self.src.fetch_media(self.baseDir,recursive=True)
         print "XXX Populating content.json..."
         content_fh = open(os.path.join(self.contentDir,"content.json"),"w")
         content_fh.write(self.content_json)
@@ -137,15 +139,41 @@ class H5PCoursePresentation(object):
             self._content_dict = self._generate_content_dict()
         return self._content_dict
     
+    # Override in subclasses!
+    def _generate_content_dict(self):
+        return {}
+    
+class H5PCoursePresentation(_H5PContent):
+    def _gen_subContentId(self):
+        return str(uuid.uuid1())
+        
     def _generate_content_dict(self):
         content = {}
         content["presentation"] = {"slides": []}
-        for c in self.mdlobj.children:
-            # Get a python dict of properties that will be converted
-            # to JSON for this child's part of content.json
+        for c in self.src.children:
             for h in c.to_h5p(self.baseDir):
-                child_content = h.content
-                content["presentation"]["slides"].append(child_content)
+                slide_content = {
+                    "elements": [
+                      {
+                        "x": 1,
+                        "y": 1,
+                        "width": 98,
+                        "height": 98,
+                        "action": {
+                            "library": h.library, 
+                            "params" : h.content,
+                            "subContentId": self._gen_subContentId(),
+                        },
+                        "alwaysDisplayComments": False,
+                        "backgroundOpacity": 0,
+                        "displayAsButton": False,
+                        "invisible": False,
+                        "solution": ""
+                      }
+                    ],
+                    "keywords": []
+                  }
+                content["presentation"]["slides"].append(slide_content)
                 
         content["l10n"] = {
             "slide": "Slide",
@@ -192,72 +220,32 @@ class H5PCoursePresentation(object):
             "hideSummarySlide": False
           }
         return content
-        
-    def __repr__(self):
-        return self.content_json
     
-class _H5PSlide(object):
-    content_template = {}
-    def __init__(self,mdlobj,baseDir):
-        self.baseDir = baseDir
-        self.mdlobj = mdlobj
-        self._content = None
-        self.uuid = str(uuid.uuid1())
-        
-    @property
-    def content(self):
-        if self._content is None:
-            self._content = self.generate_content_dict()
-        return self._content
-        
-    @property
-    def content_json(self):
-        return json.dumps(self.content)
-    
-    def fetch_media(self):
-        return self.mdlobj.fetch_media(self.baseDir)
-    
-    def __repr__(self):
-        return self.content_json
-        
-    
-class H5PHTMLSlide(_H5PSlide):
-    def generate_content_dict(self):
+
+class H5PAdvancedText(_H5PContent):
+    library = "H5P.AdvancedText 1.1"
+    def _generate_content_dict(self):
         content = {
-            "elements": [
-              {
-                "x": 1,
-                "y": 1,
-                "width": 98,
-                "height": 98,
-                "action": {
-                  "library": "H5P.AdvancedText 1.1",
-                  "params": {
-                    "text": self.mdlobj.text,
-                  },
-                  "subContentId": self.uuid
-                },
-                "alwaysDisplayComments": False,
-                "backgroundOpacity": 0,
-                "displayAsButton": False,
-                "invisible": False,
-                "solution": ""
-              }
-            ],
-            "keywords": []
+            "text": self.src.text,
           }
         return content
     
 # TODO:
-class H5PEssayQuestionSlide(_H5PSlide):
-    pass
+class H5PEssayQuestion(_H5PContent):
+    library = "H5P.AdvancedText 1.1"
+    def _generate_content_dict(self):
+        content = {
+            "text": "<h2>This is dummy text</h2><h3>An essay q will go here</h3>",
+          }
+        return content
 
-class H5PMultipleChoiceSlide(_H5PSlide):
-    def generate_content_dict(self):
+class H5PMultipleChoice(_H5PContent):
+    library = "H5P.MultiChoice 1.5"
+    def _generate_content_dict(self):
         true = True
         false = False
         answers = []
-        for a in self.mdlobj.answers:
+        for a in self.src.answers:
             answers.append({
                 "correct": a.correct,
                 "tipsAndFeedback": {
@@ -269,49 +257,29 @@ class H5PMultipleChoiceSlide(_H5PSlide):
               })
             
         content = {
-            "elements": [
-              {
-                "x": 1,
-                "y": 1,
-                "width": 98,
-                "height": 98,
-                "action": {
-                  "library": "H5P.MultiChoice 1.5",
-                  "params": {
-                    "media": {
-                      "params": {}
-                    },
-                    "answers": answers,
-                    "UI": {
-                      "checkAnswerButton": "Check",
-                      "showSolutionButton": "Show solution",
-                      "tryAgainButton": "Retry",
-                      "correctText": "Correct!",
-                      "almostText": "Almost!",
-                      "wrongText": "Wrong"
-                    },
-                    "behaviour": {
-                      "enableRetry": true,
-                      "enableSolutionsButton": true,
-                      "type": "auto",
-                      "singlePoint": true,
-                      "randomAnswers": true,
-                      "showSolutionsRequiresInput": true,
-                      "disableImageZooming": false
-                    },
-                    "question": self.mdlobj.text
-                  },
-                  "subContentId": self.uuid
-                },
-                "alwaysDisplayComments": false,
-                "backgroundOpacity": 0,
-                "displayAsButton": false,
-                "invisible": false,
-                "solution": ""
-              }
-            ],
-            "keywords": []
-          }
+            "media": {
+              "params": {}
+            },
+            "answers": answers,
+            "UI": {
+              "checkAnswerButton": "Check",
+              "showSolutionButton": "Show solution",
+              "tryAgainButton": "Retry",
+              "correctText": "Correct!",
+              "almostText": "Almost!",
+              "wrongText": "Wrong"
+            },
+            "behaviour": {
+              "enableRetry": true,
+              "enableSolutionsButton": true,
+              "type": "auto",
+              "singlePoint": true,
+              "randomAnswers": true,
+              "showSolutionsRequiresInput": true,
+              "disableImageZooming": false
+            },
+            "question": self.src.text
+        }
         return content
 
 
@@ -469,7 +437,7 @@ class MoodleSection(_MoodleContent):
             
 class _MoodleModule(_MoodleContent):
     _base_property_names = _MoodleContent._base_property_names + ["moduleid","modulename"]
-    _h5pClass = H5PHTMLSlide
+    _h5pClass = H5PAdvancedText
     
     @property
     def contentType(self):
@@ -530,14 +498,14 @@ class _MoodleQuestion(_MoodleModule):
         return "Question" #"Question from XML:\n%s" % lxml.etree.tostring(self.root_xmltree)
     
 class MoodleQuestionMulti(_MoodleQuestion):
-    _h5pClass = H5PMultipleChoiceSlide
+    _h5pClass = H5PMultipleChoice
     
     @property
     def answers(self):
         return [ MoodleQuestionAnswer(x) for x in self.root_xmltree.xpath(".//answers/answer") ]
     
 class MoodleQuestionEssay(_MoodleQuestion):
-    _h5pClass = H5PEssayQuestionSlide
+    _h5pClass = H5PEssayQuestion
 
 class MoodleUrl(_MoodleModule):
     _extended_property_names = ["name","intro", "externalurl"]

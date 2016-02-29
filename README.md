@@ -1,4 +1,4 @@
-Work in progress on automated conversion of Moodle content to H5P content. See notes and code prototypes in the .ipynb file.
+Work in progress on automated conversion of Moodle content to H5P content. 
 
 **Important**: If you want to experiment with the code youreself, you will need to acquire a Moodle archive of the CSE course and unzip it into `CommonSenseEcon.mbz-expanded` in this directory. It is not included in the repo in case of copyright issues.
 

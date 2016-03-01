@@ -103,28 +103,29 @@ import uuid
 import shutil
 
 class _H5PContent(object):
-    def __init__(self,section,baseDir,auto_save=False,force_fresh=False):
+    def __init__(self,src,auto_save=False,force_fresh=False):
         self._content_dict = None
-        self.src     = section
-        self.baseDir    = baseDir
-        self.contentDir = os.path.join(self.baseDir,"content")
+        self.src     = src
         if auto_save:
             self.save(force_fresh=force_fresh)
         
     def __repr__(self):
         return self.content_json
         
-    def save(self,force_fresh=False):
-        if os.path.exists(self.baseDir) and force_fresh:
-            print "XXX Removing existing dir: %s" % self.baseDir
-            shutil.rmtree(self.baseDir)
-        if not os.path.exists(self.baseDir):
-            print "XXX copying template to %s" % self.baseDir
-            copy(h5p_template_dirs["CoursePresentation"],self.baseDir)
+    def save(self,baseDir=None,force_fresh=False):
+        if baseDir is None:
+            baseDir = os.path.join(export_dir,self.src.title)
+        contentDir = os.path.join(baseDir,"content")
+        if os.path.exists(baseDir) and force_fresh:
+            print "XXX Removing existing dir: %s" % baseDir
+            shutil.rmtree(baseDir)
+        if not os.path.exists(baseDir):
+            print "XXX copying template to %s" % baseDir
+            copy(h5p_template_dirs["CoursePresentation"],baseDir)
         print "XXX Downloading media..."
-        self.src.fetch_media(self.baseDir,recursive=True)
+        self.src.fetch_media(baseDir,recursive=True)
         print "XXX Populating content.json..."
-        content_fh = open(os.path.join(self.contentDir,"content.json"),"w")
+        content_fh = open(os.path.join(contentDir,"content.json"),"w")
         content_fh.write(self.content_json)
         content_fh.close()
         print "XXX DONE."
@@ -142,39 +143,40 @@ class _H5PContent(object):
     # Override in subclasses!
     def _generate_content_dict(self):
         return {}
-    
-class H5PCoursePresentation(_H5PContent):
-    def _gen_subContentId(self):
-        return str(uuid.uuid1())
         
+    # Not used in most cases
+    def add_child(self,child_h5p):
+        pass
+    
+class H5PCoursePresentation(_H5PContent):                
     def _generate_content_dict(self):
         content = {}
         content["presentation"] = {"slides": []}
-        for c in self.src.children:
-            for h in c.to_h5p(self.baseDir):
-                slide_content = {
-                    "elements": [
-                      {
-                        "x": 1,
-                        "y": 1,
-                        "width": 98,
-                        "height": 98,
-                        "action": {
-                            "library": h.library, 
-                            "params" : h.content,
-                            "subContentId": self._gen_subContentId(),
-                        },
-                        "alwaysDisplayComments": False,
-                        "backgroundOpacity": 0,
-                        "displayAsButton": False,
-                        "invisible": False,
-                        "solution": ""
-                      }
-                    ],
-                    "keywords": []
+        slides = []
+        for child_h5p in self.src.to_h5p():
+            slides.append({
+                "elements": [
+                  {
+                    "x": 1,
+                    "y": 1,
+                    "width": 98,
+                    "height": 98,
+                    "action": {
+                        "library": child_h5p.library, 
+                        "params" : child_h5p.content,
+                        "subContentId": self._gen_subContentId(),
+                    },
+                    "alwaysDisplayComments": False,
+                    "backgroundOpacity": 0,
+                    "displayAsButton": False,
+                    "invisible": False,
+                    "solution": ""
                   }
-                content["presentation"]["slides"].append(slide_content)
-                
+                ],
+                "keywords": []
+              })
+        content["presentation"]["slides"].append(slides)
+        
         content["l10n"] = {
             "slide": "Slide",
             "yourScore": "Your Score",
@@ -220,6 +222,9 @@ class H5PCoursePresentation(_H5PContent):
             "hideSummarySlide": False
           }
         return content
+         
+    def _gen_subContentId(self):
+        return str(uuid.uuid1())
     
 
 class H5PAdvancedText(_H5PContent):
@@ -315,14 +320,11 @@ class _MoodleContent(object):
             setattr(self, p, content)
                 
     def __repr__(self):
-        title = self.contentType
+        title = "%s/%s" % (type(self),self.contentType)
         if self.title is not None:
             title += " %s" % self.title
-        lines = []
-        lines.append(title)
-        for m in self.children:
-            lines.append("    %s" % m)
-        return "\n".join(lines)
+        title += " with %s children" % len(self.children)
+        return title
     
     @property
     def title(self):
@@ -395,17 +397,15 @@ class _MoodleContent(object):
                         local_fn = download_video(url,baseDir)
                         n.set(p,local_fn)
                         files.append(local_fn)
-                        
         return (files,content_xmltree) 
-    
-    def to_h5p(self, subDir=None, baseDir=export_dir):
-        if subDir is None:
-            subDir = self.title
-        h5pDir = os.path.join(baseDir,subDir)
-        elements = [self._h5pClass(self,h5pDir)]
+        
+    def to_h5p(self):
+        h5p = []
+        h5p.append(self._h5pClass(self))
+        #print "XXX %s generates %s" % (self,type(h5p))
         for child in self.children:
-            elements += child.to_h5p(subDir=subDir,baseDir=baseDir)
-        return elements
+            h5p += child.to_h5p()
+        return h5p
         
     @property
     def text(self):
@@ -419,7 +419,7 @@ class MoodleSection(_MoodleContent):
     _base_property_names = ["sectionid","title","directory"]
     _extended_property_names = ["summary"]
     _content_nodes = ["summary"]
-    _h5pClass = H5PCoursePresentation
+    _h5pClass = H5PAdvancedText
 
     def _get_children(self):
         children = []
@@ -474,7 +474,11 @@ class MoodleQuiz(_MoodleModule):
         for qixml in self.extended_xmltree.xpath(".//question_instance"):
             qid = qixml.find("questionid").text
             qxml = questions_xml.xpath("/question_categories/question_category/questions/question[@id=%s]" % qid)[0]
-            mod = moodle_question_factory(qxml)
+            try:
+                mod = moodle_question_factory(qxml)
+            except UnknownMoodleQuestionTypeException,e:
+                print e
+                continue
             children.append(mod)
         return children
         
@@ -565,17 +569,13 @@ def moodle_question_factory(question_xml):
     if question_classes.has_key(qtype):
         return question_classes[qtype](question_xml)
     else: 
-        raise UnknownMoodleQuestionTypeException("Don't know how to handle '%s' quiz questions" % modulename)
+        raise UnknownMoodleQuestionTypeException("Don't know how to handle '%s' quiz questions" % qtype)
 
 
 
 e = lxml.etree.parse(moodle_dir + "moodle_backup.xml")
 s = MoodleSection(e.xpath("//sections/section")[1])
-#s.to_h5p()
+h = H5PCoursePresentation(s)
+h.save()
 
-q = s.children[1]
-print type(q)
-#print q.to_h5p()[0].content
-#import pdb; pdb.set_trace()
-print q.children[0].to_h5p()
 

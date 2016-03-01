@@ -151,7 +151,7 @@ class _H5PContent(object):
 class H5PCoursePresentation(_H5PContent):                
     def _generate_content_dict(self):
         content = {}
-        content["presentation"] = {"slides": []}
+        content["presentation"] = {}
         slides = []
         for child_h5p in self.src.to_h5p():
             slides.append({
@@ -175,7 +175,7 @@ class H5PCoursePresentation(_H5PContent):
                 ],
                 "keywords": []
               })
-        content["presentation"]["slides"].append(slides)
+        content["presentation"]["slides"] = slides
         
         content["l10n"] = {
             "slide": "Slide",

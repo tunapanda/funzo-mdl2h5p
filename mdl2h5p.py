@@ -45,7 +45,7 @@ import urllib2
 filesxml = lxml.etree.parse(os.path.join(moodle_dir,"files.xml"))
 def download_link_target(url,basedir,content_type="files",force=False):
     content_dir = os.path.join("content",content_type)
-    dn = os.path.join(basedir,content_dir)
+    dn = os.path.join(basedir,content_type)
     if not os.path.exists(dn):
         os.makedirs(dn)
     fn = os.path.basename(url)
@@ -102,59 +102,66 @@ def download_video(url,basedir,content_type="files"):
 import uuid
 import shutil
 
-class _H5PContent(object):
-    def __init__(self,src,auto_save=False,force_fresh=False):
+def save_h5p(h5p,baseDir=None,force_fresh=False):
+    if baseDir is None:
+        baseDir = os.path.join(export_dir,h5p.title)
+    contentDir = os.path.join(baseDir,"content")
+    if os.path.exists(baseDir) and force_fresh:
+        print "XXX Removing existing dir: %s" % baseDir
+        shutil.rmtree(baseDir)
+    if not os.path.exists(baseDir):
+        print "XXX copying template to %s" % baseDir
+        copy(h5p_template_dirs["CoursePresentation"],baseDir)
+    print "XXX Downloading media..."
+    h5p.fetch_media(baseDir,recursive=True)
+    print "XXX Populating content.json..."
+    content_fh = open(os.path.join(contentDir,"content.json"),"w")
+    content_fh.write(h5p.content_json)
+    content_fh.close()
+    print "XXX DONE."
+
+class H5PCoursePresentation(object): 
+    def __init__(self, title):
+        self.title = title
         self._content_dict = None
-        self.src     = src
-        if auto_save:
-            self.save(force_fresh=force_fresh)
+        self.slides = []
         
-    def __repr__(self):
-        return self.content_json
+    def fetch_media(self,baseDir,recursive=True):
+        res = []
+        for child_h5p in self._get_slides():
+            res += child_h5p.fetch_media(baseDir,recursive)
+        return res
         
-    def save(self,baseDir=None,force_fresh=False):
-        if baseDir is None:
-            baseDir = os.path.join(export_dir,self.src.title)
-        contentDir = os.path.join(baseDir,"content")
-        if os.path.exists(baseDir) and force_fresh:
-            print "XXX Removing existing dir: %s" % baseDir
-            shutil.rmtree(baseDir)
-        if not os.path.exists(baseDir):
-            print "XXX copying template to %s" % baseDir
-            copy(h5p_template_dirs["CoursePresentation"],baseDir)
-        print "XXX Downloading media..."
-        self.src.fetch_media(baseDir,recursive=True)
-        print "XXX Populating content.json..."
-        content_fh = open(os.path.join(contentDir,"content.json"),"w")
-        content_fh.write(self.content_json)
-        content_fh.close()
-        print "XXX DONE."
+    def add_slides(self, child_h5ps):
+        if hasattr(child_h5ps,"__iter__"):
+            self.slides += child_h5ps
+        else:
+            self.slides.append(child_h5p)
+    
+    def _get_slides(self):
+        #return self.src.to_h5p()
+        return self.slides
             
     @property
     def content_json(self):
-        return json.dumps(self.content)
+        return json.dumps(
+            self.content,
+            sort_keys=True,
+            indent=4,
+            separators=(',', ': ')
+        )                
             
     @property
     def content(self):
         if self._content_dict is None:
             self._content_dict = self._generate_content_dict()
         return self._content_dict
+           
+    def _gen_subContentId(self):
+        return str(uuid.uuid1())
     
-    # Override in subclasses!
-    def _generate_content_dict(self):
-        return {}
-        
-    # Not used in most cases
-    def add_child(self,child_h5p):
-        pass
-    
-class H5PCoursePresentation(_H5PContent):                
-    def _generate_content_dict(self):
-        content = {}
-        content["presentation"] = {}
-        slides = []
-        for child_h5p in self.src.to_h5p():
-            slides.append({
+    def _generate_slide_dict(self,child_h5p):
+        return {
                 "elements": [
                   {
                     "x": 1,
@@ -174,7 +181,36 @@ class H5PCoursePresentation(_H5PContent):
                   }
                 ],
                 "keywords": []
-              })
+              }
+    
+    def _generate_content_dict(self):
+        content = {}
+        content["presentation"] = {}
+        slides = [{
+                "elements": [
+                  {
+                    "x": 1,
+                    "y": 1,
+                    "width": 98,
+                    "height": 98,
+                    "action": {
+                        "library": "H5P.AdvancedText 1.1", 
+                        "params" : {
+                            "text" : "<h1>"+self.title+"</h1>"
+                        },
+                        "subContentId": self._gen_subContentId(),
+                    },
+                    "alwaysDisplayComments": False,
+                    "backgroundOpacity": 0,
+                    "displayAsButton": False,
+                    "invisible": False,
+                    "solution": ""
+                  }
+                ],
+                "keywords": []
+              }]
+        for child_h5p in self._get_slides():
+            slides.append(self._generate_slide_dict(child_h5p))
         content["presentation"]["slides"] = slides
         
         content["l10n"] = {
@@ -222,11 +258,43 @@ class H5PCoursePresentation(_H5PContent):
             "hideSummarySlide": False
           }
         return content
-         
-    def _gen_subContentId(self):
-        return str(uuid.uuid1())
-    
 
+class _H5PContent(object):
+    def __init__(self,src,auto_save=False,force_fresh=False):
+        self._content_dict = None
+        self.src     = src
+        if auto_save:
+            save_h5p(self,force_fresh=force_fresh)
+        
+    def __repr__(self):
+        return self.content_json
+        
+    @property
+    def title(self):
+        return self.src.title
+            
+    @property
+    def content_json(self):
+        return json.dumps(
+            self.content,
+            sort_keys=True,
+            indent=4,
+            separators=(',', ': ')
+        ) 
+            
+    @property
+    def content(self):
+        if self._content_dict is None:
+            self._content_dict = self._generate_content_dict()
+        return self._content_dict
+        
+    def fetch_media(self,baseDir,recursive=True):
+        return self.src.fetch_media(baseDir,recursive)
+    
+    # Override in subclasses!
+    def _generate_content_dict(self):
+        return {}
+    
 class H5PAdvancedText(_H5PContent):
     library = "H5P.AdvancedText 1.1"
     def _generate_content_dict(self):
@@ -298,6 +366,8 @@ class _MoodleContent(object):
     _extended_property_names = []
     # Properties that contain HTML
     _content_nodes = []
+    # If true, render this content as a new .h5p by default
+    start_new = False
     
     def __init__(self,xmltree):
         self._children = None
@@ -410,18 +480,35 @@ class _MoodleContent(object):
     @property
     def text(self):
         if self._text is None:
-            self._text = "\n".join([ getattr(self,c) for c in self._content_nodes if getattr(self,c,None) is not None ])
+            self._text = ""
+            if self.title is not None:
+                self._text += "<h1>%s</h1>" % self.title
+            self._text += "\n".join([ getattr(self,c) for c in self._content_nodes if getattr(self,c,None) is not None ])
         return self._text
     
 
 class MoodleSection(_MoodleContent):
     contentType = "section"
     _base_property_names = ["sectionid","title","directory"]
-    _extended_property_names = ["summary"]
+    _extended_property_names = ["summary","sequence"]
     _content_nodes = ["summary"]
     _h5pClass = H5PAdvancedText
 
     def _get_children(self):
+        children = []
+        # Note: "//" causes this search to start from the passed <section>'s
+        #       xml root (top-level parent), not (just) from the section its self.
+        for activity_id in self.sequence.split(","):
+            axml = self.root_xmltree.xpath("//activities/activity[moduleid = %s]" % activity_id)[0]
+            try:
+                mod = moodle_module_factory(axml)
+            except UnknownMoodleModuleException,e:
+                print "\n***\n%s\n***\n" % e
+                mod = _MoodleModule(axml)
+            children.append(mod)
+        return children
+
+    def _OLD_get_children(self):
         children = []
         # Note: "//" causes this search to start from the passed <section>'s
         #       xml root (top-level parent), not (just) from the section its self.
@@ -466,14 +553,55 @@ class MoodleForum(_MoodleModule):
 class MoodleQuiz(_MoodleModule):
     _extended_property_names = ["name","intro"]
     _content_nodes = ["intro"]
+    start_new = True
+    
+    @property
+    def title(self):
+        return "Quiz: %s" % self.name
+    
+    @title.setter
+    def title(self,value):
+        self._title = value
 
     def _get_children(self):
         questions_fn = os.path.join(moodle_dir,"questions.xml")
         questions_xml = lxml.etree.parse(questions_fn)
         children = []
+        
+        # Store a list of questions explicitly associated with the 
+        # quiz so we know not to substitute them for questions with
+        # qtype "random"
+        used_question_IDs = []  
         for qixml in self.extended_xmltree.xpath(".//question_instance"):
             qid = qixml.find("questionid").text
-            qxml = questions_xml.xpath("/question_categories/question_category/questions/question[@id=%s]" % qid)[0]
+            used_question_IDs.append(qid)
+            
+        # This will store questions that...
+        # - Are not explicitly associated with the quiz, and
+        # - Do not have qtype "random"
+        available_questions_by_category = {}
+        
+        for qixml in self.extended_xmltree.xpath(".//question_instance"):
+            qid = qixml.find("questionid").text
+            qxml = questions_xml.xpath(
+                "/question_categories/question_category/questions/question[@id=%s]" % qid
+            )[0]
+              
+            if qxml.find("qtype").text == "random":
+                category_xml = qxml.xpath(
+                    "ancestor::question_category"
+                )[0]
+                category_id = category_xml.get("id")
+                if not available_questions_by_category.has_key(category_id):
+                    available_questions_by_category[category_id] = {}
+                    for q in category_xml.xpath(".//question[qtype != 'random']"):
+                        if q.get("id") not in used_question_IDs:
+                            available_questions_by_category[category_id][q.get("id")] = q
+                try:
+                    (qid,qxml) = available_questions_by_category[category_id].popitem()
+                except KeyError:
+                    print "XXX ERROR: more random questions than non-random in category %s?" % category_id
+                    continue
             try:
                 mod = moodle_question_factory(qxml)
             except UnknownMoodleQuestionTypeException,e:
@@ -547,8 +675,8 @@ class UnknownMoodleQuestionTypeException(Exception):
 def moodle_module_factory(module_xml):
     module_classes = {
         "assign": MoodleAssign,
-        "folder" : MoodleFolder,
-        "forum" : MoodleForum,
+        #"folder" : MoodleFolder,
+        #"forum" : MoodleForum,
         "label" : MoodleLabel,
         "page"  : MoodlePage,
         "quiz"  : MoodleQuiz,
@@ -571,11 +699,71 @@ def moodle_question_factory(question_xml):
     else: 
         raise UnknownMoodleQuestionTypeException("Don't know how to handle '%s' quiz questions" % qtype)
 
+if __name__ == "__main__":
+    e = lxml.etree.parse(moodle_dir + "moodle_backup.xml")
+    course_name = "funzo-CSE-1000"
+    course_category = "Economics"
+    section_number = 0
+    for s in [e.xpath("//sections/section")[1]]:
+        section_number += 1
+        section_id = s.find("sectionid").text
+        #title = s.find("title").text
+        #h5p_toplevels = [H5PCoursePresentation(title)]
+        h5p_toplevels = []
+        activities = s.xpath("//activities/activity[sectionid = %s]" % section_id)
+        force_new = True
+        for i in range(0,len(activities)):
+            axml = activities[i]
+            try:
+                mod = moodle_module_factory(axml)
+            except UnknownMoodleModuleException,e:
+                print "\n***\n%s\n***\n" % e
+                continue
+            if mod.start_new:
+                # New toplevel for this activity
+                title = mod.title
+                h5p_toplevels.append(H5PCoursePresentation(title))
+                force_new = True
+            # New toplevel for 1st activity, or after a start_new
+            elif force_new: 
+                title = "Watch, Read, and Listen"
+                h5p_toplevels.append(H5PCoursePresentation(title))
+                force_new = False
+            h5p_toplevels[-1].add_slides(mod.to_h5p())
+        courseBaseDir = os.path.join(export_dir,course_name)
+        moduleBaseDir = os.path.join(courseBaseDir,"modules")
+        course_modules = []
+        for i in range(0,len(h5p_toplevels)):
+            h = h5p_toplevels[i]
+            module_number = i + 1
+            moduleFullName = "%s-%s-%s" % (
+                section_number,
+                module_number,
+                h.title
+            )
+            h = h5p_toplevels[i]
+            moduleDir = os.path.join(moduleBaseDir,moduleFullName)
+            course_modules.append({
+              "title": moduleFullName,
+              "permalink": os.path.basename(moduleDir)
+            })
+            save_h5p(h, baseDir=moduleDir)
+        course_content_fn = os.path.join(
+            courseBaseDir,
+            "content.json"
+        )
+        course_content_fh = open(course_content_fn,"w")
+        course_content_fh.write(json.dumps(
+            {
+              "title": course_name,
+              "subject": course_category,
+              "permalink": os.path.basename(courseBaseDir),
+              "modules": course_modules
+            },
+            sort_keys=True,
+            indent=4,
+            separators=(',', ': ')
+        ))
 
-
-e = lxml.etree.parse(moodle_dir + "moodle_backup.xml")
-s = MoodleSection(e.xpath("//sections/section")[1])
-h = H5PCoursePresentation(s)
-h.save()
 
 

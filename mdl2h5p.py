@@ -1,14 +1,23 @@
-
 # coding: utf-8
 
-
 from __future__ import unicode_literals
-import lxml
-import lxml.etree
-import os.path
+import errno
 import json
+import lxml, lxml.etree
+import os, os.path
+import re
+import shutil
+import sys
+import urllib2
+import uuid
 import youtube_dl
 
+# Regexes that match URLs which should be treated as video 
+# download sites.
+video_url_re = [
+    re.compile(r".*criticalcommons\.org.*clips/.*"),
+]
+h5p_library_re = re.compile(r"H5P\.(.*) (\d+)\.(\d+)")
 
 export_dir = "h5p_export"
 moodle_dir = "CommonSenseEcon.mbz-expanded/"
@@ -16,22 +25,30 @@ h5p_template_dirs = {
     "CoursePresentation" : "H5P_CoursePresentation-template",
 }
 
-# TODO: This is a total hack. Need include some js magic or something
-# that gets the appropriate base URL from the host instead
-h5p_assets_url_base = "/courses/funzo-CSE-1000/modules/module-2/"
+debugLevel = 3
+def dbg(msg,level=3):
+    """Print debig messages, depending on how the debugLevel global is set"""
+    if level >= debugLevel:
+        sys.stderr.write("* DBG:\n* DBG: XXX %x\n* DBG: XXX\n" % msg)
+
+def json_pp(content):
+    """Pretty-print a JSON representation of the given content"""
+    return json.dumps(
+            content,
+            sort_keys=True,
+            indent=4,
+            separators=(',', ': ')
+        )
 
 # credit: http://pythoncentral.io/how-to-recursively-copy-a-directory-folder-in-python/ 
-import errno
-import shutil
-import re
- 
-def copy(src, dest):
+def copy(src, dst):
+    """Recursively copy src to dst (can also copy regular files)"""
     try:
-        shutil.copytree(src, dest)
+        shutil.copytree(src, dst)
     except OSError as e:
         # If the error was caused because the source wasn't a directory
         if e.errno == errno.ENOTDIR:
-            shutil.copy(src, dest)
+            shutil.copy(src, dst)
         else:
             print('Directory not copied. Error: %s' % e)
             
@@ -41,16 +58,16 @@ def unescape_html(s):
     s = s.replace("&amp;", "&")
     return s
 
-import urllib2
 filesxml = lxml.etree.parse(os.path.join(moodle_dir,"files.xml"))
 def download_link_target(url,basedir,content_type="files",force=False):
+    """Download url target to BASEDIR/content/CONTENT_TYPE/..."""
     content_dir = os.path.join("content",content_type)
-    dn = os.path.join(basedir,content_type)
+    dn = os.path.join(basedir,content_dir)
     if not os.path.exists(dn):
         os.makedirs(dn)
     fn = os.path.basename(url)
     dst = os.path.join(dn,fn)
-    print "XXX DL %s to %s" % (fn,dst)
+    dbg("DL %s to %s" % (fn,dst))
     if not os.path.exists(dst) or force:
         urlinfo = urllib2.urlparse.urlparse(url)
         if urlinfo.scheme == "":
@@ -63,10 +80,11 @@ def download_link_target(url,basedir,content_type="files",force=False):
         else:
             open(dst, "w").write(urllib2.urlopen(url).read())
     # Return an absolute URL that should work for this file within funzo
-    return "/".join([h5p_assets_url_base,content_dir,fn])
+    return os.path.join(content_type,fn)
 
 
 def download_video(url,basedir,content_type="files"):
+    """Like download_link_target, but specialized for video pages"""
     global fn
     content_dir = os.path.join("content",content_type)
     dn = os.path.join(basedir,content_dir)
@@ -75,7 +93,7 @@ def download_video(url,basedir,content_type="files"):
     urlinfo = urllib2.urlparse.urlparse(url)
     fn = "-".join([urlinfo.netloc] + urlinfo.path.split("/"))
     dst = os.path.join(dn,fn)
-    print "***\nDOWNLOADING VIDEO\n  URL: %s\n  DST: %s\n***" % (url,dst)
+    dbg("DOWNLOADING VIDEO\n  URL: %s\n  DST: %s" % (url,dst),4)
     def ydl_hooks(d):
         global fn
         if d['status'] == 'finished':
@@ -92,35 +110,40 @@ def download_video(url,basedir,content_type="files"):
         except youtube_dl.MaxDownloadsReached:
             pass
         except youtube_dl.DownloadError:
-            print "XXX failed to DL %s" % fn
-    relative_url = os.path.join(h5p_assets_url_base,content_dir,fn)
-    print "Returning: %s" % relative_url
+            dbg("failed to DL %s" % fn)
+    relative_url = os.path.join(content_type,fn)
+    dbg("Returning: %s" % relative_url,4)
     return relative_url
 
-
-
-import uuid
-import shutil
 
 def save_h5p(h5p,baseDir=None,force_fresh=False):
     if baseDir is None:
         baseDir = os.path.join(export_dir,h5p.title)
     contentDir = os.path.join(baseDir,"content")
     if os.path.exists(baseDir) and force_fresh:
-        print "XXX Removing existing dir: %s" % baseDir
+        dbg("Removing existing dir: %s" % baseDir, 4)
         shutil.rmtree(baseDir)
     if not os.path.exists(baseDir):
-        print "XXX copying template to %s" % baseDir
-        copy(h5p_template_dirs["CoursePresentation"],baseDir)
-    print "XXX Downloading media..."
+        #dbg("copying template to %s" % baseDir)
+        #copy(h5p_template_dirs["CoursePresentation"],baseDir)
+        dbg("Creating H5P base dir %s" % baseDir, 4)
+        os.mkdir(baseDir)
+    dbg("Downloading media...")
     h5p.fetch_media(baseDir,recursive=True)
-    print "XXX Populating content.json..."
+    dbg("Populating content.json...")
     content_fh = open(os.path.join(contentDir,"content.json"),"w")
     content_fh.write(h5p.content_json)
     content_fh.close()
-    print "XXX DONE."
+    dbg("Populating h5p.json...")
+    # TODO: copy required libraries (`preloadedDependencies`) in
+    # h5p_json from some known location into baseDir? 
+    h5p_fh = open(os.path.join(baseDir,"h5p.json"),"w")
+    h5p_fh.write(h5p.h5p_json)
+    h5p_fh.close()
+    dbg("DONE.")
 
 class H5PCoursePresentation(object): 
+    library = "H5P.CoursePresentation 1.7"
     def __init__(self, title):
         self.title = title
         self._content_dict = None
@@ -141,15 +164,38 @@ class H5PCoursePresentation(object):
     def _get_slides(self):
         #return self.src.to_h5p()
         return self.slides
+        
+    @property
+    def h5p_json(self):
+        return json_pp(self.package_dict)
+        
+    @property
+    def package_dict(self):
+        if self._package_dict is None:
+            self._package_dict = {
+                  "title": self.title,
+                  "language": "und",
+                  "mainLibrary": self.library.split()[0],
+                  "embedTypes": [
+                    "div"
+                  ],
+                  "preloadedDependencies": []
+            }
+            for h5p in [self] + self.slides:
+                lib_string = getattr(h5p,"library",None)
+                if lib_string is None:
+                    continue
+                (machineName,majorVersion,minorVersion) = h5p_library_re.match(lib_string)
+                self._package_dict["preloadedDependencies"].append({
+                  "machineName": machineName,
+                  "majorVersion": majorVersion,
+                  "minorVersion": minorVersion
+                })
+        return self._package_dict
             
     @property
     def content_json(self):
-        return json.dumps(
-            self.content,
-            sort_keys=True,
-            indent=4,
-            separators=(',', ': ')
-        )                
+        return json_pp(self.content)                
             
     @property
     def content(self):
@@ -275,12 +321,7 @@ class _H5PContent(object):
             
     @property
     def content_json(self):
-        return json.dumps(
-            self.content,
-            sort_keys=True,
-            indent=4,
-            separators=(',', ': ')
-        ) 
+        return json_pp(self.content) 
             
     @property
     def content(self):
@@ -455,24 +496,36 @@ class _MoodleContent(object):
             for n in nodes:
                 url = n.get(p)
                 ext = os.path.splitext(url)[-1]
+                local_fn = None
                 if ext.startswith("."):
                     ext = ext[1:]
                 if ext in download_extensions:
                     local_fn = download_link_target(url,baseDir)
-                    n.set(p,local_fn)
-                    files.append(local_fn)
-
                 elif getattr(self,"title",None) is not None:
+                    # CSE-specific
                     if self.title.startswith("Watch:"):
                         local_fn = download_video(url,baseDir)
-                        n.set(p,local_fn)
-                        files.append(local_fn)
+                if local_fn is None:
+                    for regex in video_url_re:
+                        if regex.match(url):
+                            local_fn = download_video(url,baseDir)
+                            break
+                if local_fn is None:
+                    dbg("Ignoring non-downloadable URL %s" % url) 
+                else: 
+                    n.set(p,local_fn)
+                    classes = n.get("class","")
+                    # CSE-specific
+                    classes = classes.remove("external")
+                    classes += " mdl2h5p_local_content"
+                    n.set("class",classes)
+                    files.append(local_fn)
         return (files,content_xmltree) 
         
     def to_h5p(self):
         h5p = []
         h5p.append(self._h5pClass(self))
-        #print "XXX %s generates %s" % (self,type(h5p))
+        #dbg("%s generates %s" % (self,type(h5p)))
         for child in self.children:
             h5p += child.to_h5p()
         return h5p
@@ -507,20 +560,6 @@ class MoodleSection(_MoodleContent):
                 mod = _MoodleModule(axml)
             children.append(mod)
         return children
-
-    def _OLD_get_children(self):
-        children = []
-        # Note: "//" causes this search to start from the passed <section>'s
-        #       xml root (top-level parent), not (just) from the section its self.
-        for axml in self.root_xmltree.xpath("//activities/activity[sectionid = %s]" % self.sectionid):
-            try:
-                mod = moodle_module_factory(axml)
-            except UnknownMoodleModuleException,e:
-                print "\n***\n%s\n***\n" % e
-                mod = _MoodleModule(axml)
-            children.append(mod)
-        return children
-            
             
 class _MoodleModule(_MoodleContent):
     _base_property_names = _MoodleContent._base_property_names + ["moduleid","modulename"]
@@ -600,7 +639,7 @@ class MoodleQuiz(_MoodleModule):
                 try:
                     (qid,qxml) = available_questions_by_category[category_id].popitem()
                 except KeyError:
-                    print "XXX ERROR: more random questions than non-random in category %s?" % category_id
+                    dbg("ERROR: more random questions than non-random in category %s?" % category_id)
                     continue
             try:
                 mod = moodle_question_factory(qxml)
@@ -612,7 +651,7 @@ class MoodleQuiz(_MoodleModule):
         
 class _MoodleQuestion(_MoodleModule):
     _base_property_names = ["name","questiontext","qtype"]
-    _content_nodes = ["questiontext"]
+    _content_nodes = ["intro","questiontext"]
     #_questionText = None
     _h5pClass = None # replace in subclasses
         
@@ -625,6 +664,14 @@ class _MoodleQuestion(_MoodleModule):
     @property
     def contentType(self):
         return self.qtype
+        
+    @property
+    def text(self):
+        if self._text is None:
+            self._text = ""
+            self._text += "\n".join([ getattr(self,c) for c in self._content_nodes if getattr(self,c,None) is not None ])
+        return self._text
+        
     
     def __repr__(self):
         return "Question" #"Question from XML:\n%s" % lxml.etree.tostring(self.root_xmltree)
@@ -699,12 +746,22 @@ def moodle_question_factory(question_xml):
     else: 
         raise UnknownMoodleQuestionTypeException("Don't know how to handle '%s' quiz questions" % qtype)
 
-if __name__ == "__main__":
-    e = lxml.etree.parse(moodle_dir + "moodle_backup.xml")
-    course_name = "funzo-CSE-1000"
-    course_category = "Economics"
+def moodle2h5p(
+        moodle_dir,
+        export_dir=export_dir,
+        course_name=None,
+        course_category="Misc"
+    ):
+    e = lxml.etree.parse(os.path.join(
+            moodle_dir,
+            "moodle_backup.xml"
+        ))
+    if course_name is None:
+        cfn = e.xpath("//original_course_fullname")[0].text
+        ver = e.xpath("//backup_version")[0].text
+        course_name = "%s-%s" % (cfn,ver)
     section_number = 0
-    for s in [e.xpath("//sections/section")[1]]:
+    for s in e.xpath("//sections/section")[1:3]:
         section_number += 1
         section_id = s.find("sectionid").text
         #title = s.find("title").text
@@ -752,18 +809,29 @@ if __name__ == "__main__":
             courseBaseDir,
             "content.json"
         )
+        
+        # TODO: This shouldn't be necessary, but for
+        # some reason if you don't remove the old file,
+        # new content gets appended instead of (over)writing
+        try:
+            os.unlink(course_content_fn)
+        except OSError:
+            pass
         course_content_fh = open(course_content_fn,"w")
-        course_content_fh.write(json.dumps(
+        course_content_fh.write(json_pp(
             {
-              "title": course_name,
+              "title": course_name + " (funzo-mdl2h5p)",
               "subject": course_category,
               "permalink": os.path.basename(courseBaseDir),
               "modules": course_modules
-            },
-            sort_keys=True,
-            indent=4,
-            separators=(',', ': ')
+            }
         ))
+    
+
+if __name__ == "__main__":
+    moodle_dir = "CommonSenseEcon.mbz-expanded"
+    course_category = "Economics"
+    moodle2h5p(moodle_dir,course_category=course_category)
 
 
 

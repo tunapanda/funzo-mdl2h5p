@@ -1,7 +1,9 @@
 # coding: utf-8
 
 from __future__ import unicode_literals
+import dirsync
 import errno
+import inspect
 import json
 import lxml, lxml.etree
 import os, os.path
@@ -18,7 +20,7 @@ video_url_re = [
     re.compile(r".*criticalcommons\.org.*clips/.*"),
 ]
 h5p_library_re = re.compile(r"H5P\.(.*) (\d+)\.(\d+)")
-
+h5p_libs_dir = "h5p_libraries"
 export_dir = "h5p_export"
 moodle_dir = "CommonSenseEcon.mbz-expanded/"
 h5p_template_dirs = {
@@ -26,10 +28,17 @@ h5p_template_dirs = {
 }
 
 debugLevel = 3
+debugIndent = 0
 def dbg(msg,level=3):
     """Print debig messages, depending on how the debugLevel global is set"""
     if level >= debugLevel:
-        sys.stderr.write("* DBG:\n* DBG: XXX %x\n* DBG: XXX\n" % msg)
+        caller = inspect.stack()[1][3]
+        sys.stderr.write("\n* DBG%s: %s: %s%s\n\n" % (
+            level,
+            caller,
+            "  " * debugIndent,
+            msg)
+        )
 
 def json_pp(content):
     """Pretty-print a JSON representation of the given content"""
@@ -51,7 +60,26 @@ def copy(src, dst):
             shutil.copy(src, dst)
         else:
             print('Directory not copied. Error: %s' % e)
-            
+       
+def mkdir(path):
+    """Recursively creates a directory, similar to *nix `mkdir -p` command"""
+    if os.path.exists(path):
+        return
+    new_dirs = []
+    basedir = path
+    dbg("Checking %s" % basedir)
+    while basedir != os.path.sep:
+        (basedir,dname) = os.path.split(basedir)
+        new_dirs.append(dname)
+        if os.path.exists(basedir):
+            break
+        dbg("%s does not exist" % basedir)
+    new_dirs.reverse()
+    for dname in new_dirs:
+        basedir = os.path.join(basedir,dname)
+        dbg("Creating %s" % basedir)
+        os.mkdir(basedir)
+       
 def unescape_html(s):
     s = s.replace("&lt;", "<")
     s = s.replace("&gt;", ">")
@@ -73,8 +101,12 @@ def download_link_target(url,basedir,content_type="files",force=False):
         if urlinfo.scheme == "":
             # Look up contentHash associated with fn in files.xml
             # copy files/ab/abcd1234..., rename to fn
-            fn = os.path.basename(url)
-            mdlfn = filesxml.xpath("//file[filename='%s']" % fn)[0].findtext("contenthash")
+            fn = os.path.basename(urllib2.unquote(url))
+            try:
+                mdlfn = filesxml.xpath("//file[filename='%s']" % fn)[0].findtext("contenthash")
+            except Exception,e:
+                import pdb
+                pdb.set_trace()
             src = os.path.join(moodle_dir,"files",mdlfn[0:2],mdlfn)
             copy(src,dst)
         else:
@@ -116,20 +148,29 @@ def download_video(url,basedir,content_type="files"):
     return relative_url
 
 
-def save_h5p(h5p,baseDir=None,force_fresh=False):
+def save_h5p(h5p,baseDir=None,force_fresh=False,fetch_media=True):
     if baseDir is None:
         baseDir = os.path.join(export_dir,h5p.title)
     contentDir = os.path.join(baseDir,"content")
+    mkdir(contentDir)
     if os.path.exists(baseDir) and force_fresh:
         dbg("Removing existing dir: %s" % baseDir, 4)
         shutil.rmtree(baseDir)
     if not os.path.exists(baseDir):
-        #dbg("copying template to %s" % baseDir)
-        #copy(h5p_template_dirs["CoursePresentation"],baseDir)
         dbg("Creating H5P base dir %s" % baseDir, 4)
-        os.mkdir(baseDir)
-    dbg("Downloading media...")
-    h5p.fetch_media(baseDir,recursive=True)
+        mkdir(baseDir) 
+    dirsync.sync(
+        h5p_libs_dir, 
+        baseDir, 
+        "sync", 
+        ignore=[
+            r"\.git/\.*",
+            r".*\.swp",
+            r"\#.*",
+        ])
+    if fetch_media:
+        dbg("Downloading media...")
+        h5p.fetch_media(baseDir,recursive=True)
     dbg("Populating content.json...")
     content_fh = open(os.path.join(contentDir,"content.json"),"w")
     content_fh.write(h5p.content_json)
@@ -147,6 +188,7 @@ class H5PCoursePresentation(object):
     def __init__(self, title):
         self.title = title
         self._content_dict = None
+        self._package_dict = None
         self.slides = []
         
     def fetch_media(self,baseDir,recursive=True):
@@ -185,7 +227,7 @@ class H5PCoursePresentation(object):
                 lib_string = getattr(h5p,"library",None)
                 if lib_string is None:
                     continue
-                (machineName,majorVersion,minorVersion) = h5p_library_re.match(lib_string)
+                (machineName,majorVersion,minorVersion) = h5p_library_re.match(lib_string).groups()
                 self._package_dict["preloadedDependencies"].append({
                   "machineName": machineName,
                   "majorVersion": majorVersion,
@@ -423,7 +465,11 @@ class _MoodleContent(object):
     def _set_extended_properties(self):
         if len(self._extended_property_names) == 0:
             return
-        sourcefn = moodle_dir + "%s/%s.xml" % (self.directory,self.contentType)
+        sourcefn = os.path.join(
+            moodle_dir,
+            self.directory,
+            self.contentType+".xml"
+        )
         sourcexml = lxml.etree.parse(sourcefn).xpath("//" + self.contentType)[0]
         self.extended_xmltree = sourcexml
         for p in self._extended_property_names:
@@ -516,7 +562,7 @@ class _MoodleContent(object):
                     n.set(p,local_fn)
                     classes = n.get("class","")
                     # CSE-specific
-                    classes = classes.remove("external")
+                    classes = classes.replace("external","")
                     classes += " mdl2h5p_local_content"
                     n.set("class",classes)
                     files.append(local_fn)
@@ -750,7 +796,9 @@ def moodle2h5p(
         moodle_dir,
         export_dir=export_dir,
         course_name=None,
-        course_category="Misc"
+        course_category="Misc",
+        fetch_media=True,
+        section_indexes = None
     ):
     e = lxml.etree.parse(os.path.join(
             moodle_dir,
@@ -761,7 +809,7 @@ def moodle2h5p(
         ver = e.xpath("//backup_version")[0].text
         course_name = "%s-%s" % (cfn,ver)
     section_number = 0
-    for s in e.xpath("//sections/section")[1:3]:
+    for s in e.xpath("//sections/section"):
         section_number += 1
         section_id = s.find("sectionid").text
         #title = s.find("title").text
@@ -804,7 +852,11 @@ def moodle2h5p(
               "title": moduleFullName,
               "permalink": os.path.basename(moduleDir)
             })
-            save_h5p(h, baseDir=moduleDir)
+            save_h5p(
+                h, 
+                baseDir=moduleDir,
+                fetch_media=fetch_media
+            )
         course_content_fn = os.path.join(
             courseBaseDir,
             "content.json"
@@ -829,9 +881,21 @@ def moodle2h5p(
     
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description='Convert a Moodle backup to H5P')
+    parser.add_argument("moodle_dir")
     moodle_dir = "CommonSenseEcon.mbz-expanded"
     course_category = "Economics"
-    moodle2h5p(moodle_dir,course_category=course_category)
+    try:
+        moodle2h5p(
+            moodle_dir,
+            course_category=course_category,
+            fetch_media=True,
+        )
+    except Exception,e:
+        dbg("EXCEPTION: %s" % e,1)
+        import pdb
+        pdb.set_trace()
 
 
 

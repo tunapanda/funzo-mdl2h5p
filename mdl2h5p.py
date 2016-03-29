@@ -19,13 +19,11 @@ import youtube_dl
 video_url_re = [
     re.compile(r".*criticalcommons\.org.*clips/.*"),
 ]
-h5p_library_re = re.compile(r"H5P\.(.*) (\d+)\.(\d+)")
+h5p_library_re = re.compile(r"^(.*)\s+(\d+)\.(\d+)")
 h5p_libs_dir = "h5p_libraries"
 export_dir = "h5p_export"
 moodle_dir = "CommonSenseEcon.mbz-expanded/"
-h5p_template_dirs = {
-    "CoursePresentation" : "H5P_CoursePresentation-template",
-}
+download_extensions = ("png","jpg","docx","pptx","pdf","png","mp3","mp4")
 
 debugLevel = 3
 debugIndent = 0
@@ -33,12 +31,13 @@ def dbg(msg,level=3):
     """Print debig messages, depending on how the debugLevel global is set"""
     if level >= debugLevel:
         caller = inspect.stack()[1][3]
-        sys.stderr.write("\n* DBG%s: %s: %s%s\n\n" % (
+        sys.stderr.write("* DBG%s: %s: %s%s\n" % (
             level,
             caller,
             "  " * debugIndent,
             msg)
         )
+        sys.stderr.flush()
 
 def json_pp(content):
     """Pretty-print a JSON representation of the given content"""
@@ -107,7 +106,7 @@ def download_link_target(url,basedir,content_type="files",force=False):
             except Exception,e:
                 import pdb
                 pdb.set_trace()
-            src = os.path.join(moodle_dir,"files",mdlfn[0:2],mdlfn)
+            src = os.path.join(moodle_dir,content_type,mdlfn[0:2],mdlfn)
             copy(src,dst)
         else:
             open(dst, "w").write(urllib2.urlopen(url).read())
@@ -164,7 +163,7 @@ def save_h5p(h5p,baseDir=None,force_fresh=False,fetch_media=True):
         baseDir, 
         "sync", 
         ignore=[
-            r"\.git/\.*",
+            r".*/\.git/",
             r".*\.swp",
             r"\#.*",
         ])
@@ -223,10 +222,13 @@ class H5PCoursePresentation(object):
                   ],
                   "preloadedDependencies": []
             }
+            lib_strings = set()
             for h5p in [self] + self.slides:
                 lib_string = getattr(h5p,"library",None)
                 if lib_string is None:
                     continue
+                lib_strings.add(lib_string)
+            for lib_string in lib_strings:
                 (machineName,majorVersion,minorVersion) = h5p_library_re.match(lib_string).groups()
                 self._package_dict["preloadedDependencies"].append({
                   "machineName": machineName,
@@ -274,29 +276,30 @@ class H5PCoursePresentation(object):
     def _generate_content_dict(self):
         content = {}
         content["presentation"] = {}
-        slides = [{
-                "elements": [
-                  {
-                    "x": 1,
-                    "y": 1,
-                    "width": 98,
-                    "height": 98,
-                    "action": {
-                        "library": "H5P.AdvancedText 1.1", 
-                        "params" : {
-                            "text" : "<h1>"+self.title+"</h1>"
-                        },
-                        "subContentId": self._gen_subContentId(),
-                    },
-                    "alwaysDisplayComments": False,
-                    "backgroundOpacity": 0,
-                    "displayAsButton": False,
-                    "invisible": False,
-                    "solution": ""
-                  }
-                ],
-                "keywords": []
-              }]
+        slides = []
+        #slides = [{
+        #        "elements": [
+        #          {
+        #            "x": 1,
+        #            "y": 1,
+        #            "width": 98,
+        #            "height": 98,
+        #            "action": {
+        #                "library": "H5P.AdvancedText 1.1", 
+        #                "params" : {
+        #                    "text" : "<h1>"+self.title+"</h1>"
+        #                },
+        #                "subContentId": self._gen_subContentId(),
+        #            },
+        #            "alwaysDisplayComments": False,
+        #            "backgroundOpacity": 0,
+        #            "displayAsButton": False,
+        #            "invisible": False,
+        #            "solution": ""
+        #          }
+        #        ],
+        #        "keywords": []
+        #      }]
         for child_h5p in self._get_slides():
             slides.append(self._generate_slide_dict(child_h5p))
         content["presentation"]["slides"] = slides
@@ -388,10 +391,10 @@ class H5PAdvancedText(_H5PContent):
     
 # TODO:
 class H5PEssayQuestion(_H5PContent):
-    library = "H5P.AdvancedText 1.1"
+    library = "H5P.EssayQuestion 1.1"
     def _generate_content_dict(self):
         content = {
-            "text": "<h2>This is dummy text</h2><h3>An essay q will go here</h3>",
+            "question": self.src.text,
           }
         return content
 
@@ -531,7 +534,6 @@ class _MoodleContent(object):
         return fetched_files
     
     def _fetch_media(self,baseDir,content_xmltree):
-        download_extensions = ("png","jpg","docx","pdf","png","mp3","mp4")
         files = []
         if content_xmltree is None:
             return files
@@ -565,6 +567,8 @@ class _MoodleContent(object):
                     classes = classes.replace("external","")
                     classes += " mdl2h5p_local_content"
                     n.set("class",classes)
+                    if n.tag == "a":
+                        n.set("target","_blank")
                     files.append(local_fn)
         return (files,content_xmltree) 
         
@@ -808,9 +812,11 @@ def moodle2h5p(
         cfn = e.xpath("//original_course_fullname")[0].text
         ver = e.xpath("//backup_version")[0].text
         course_name = "%s-%s" % (cfn,ver)
-    section_number = 0
-    for s in e.xpath("//sections/section"):
-        section_number += 1
+    sections = e.xpath("//sections/section")
+    if section_indexes is None:
+        section_indexes = range(len(sections))
+    for idx in section_indexes:
+        s = sections[idx]
         section_id = s.find("sectionid").text
         #title = s.find("title").text
         #h5p_toplevels = [H5PCoursePresentation(title)]
@@ -842,7 +848,7 @@ def moodle2h5p(
             h = h5p_toplevels[i]
             module_number = i + 1
             moduleFullName = "%s-%s-%s" % (
-                section_number,
+                idx + 1,
                 module_number,
                 h.title
             )
@@ -883,17 +889,47 @@ def moodle2h5p(
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='Convert a Moodle backup to H5P')
-    parser.add_argument("moodle_dir")
-    moodle_dir = "CommonSenseEcon.mbz-expanded"
-    course_category = "Economics"
+    parser.add_argument(
+        "src_dir", 
+        default=moodle_dir,
+        help="An uncompressed moodle backup (.mbz) dir")
+    parser.add_argument(
+        "dst_dir", 
+        default=export_dir,
+        help="Directory to output converted content")
+    parser.add_argument(
+        "--category","-c",
+        default="Misc",
+        help="Course category")
+    parser.add_argument(
+        "--sections","-s",
+        default=None,
+        help="Comma-separated list of section numbers (starting at 0) to convert")
+    parser.add_argument(
+        "--fetch_media", "-m", 
+        dest="fetch_media",
+        action="store_true",
+        help="Download linked media and convert links to local targets for offline viewing")
+    parser.add_argument(
+        "--no-fetch_media", "-M", 
+        dest="fetch_media",
+        action="store_false",
+        help="Opposite of --fetch-media")
+    parser.set_defaults(fetch_media=True)
+    args = parser.parse_args()
+    section_indexes = args.sections
+    if section_indexes is not None:
+        section_indexes = map(int,section_indexes.split(","))
     try:
         moodle2h5p(
-            moodle_dir,
-            course_category=course_category,
-            fetch_media=True,
+            args.src_dir,
+            args.dst_dir,
+            course_category=args.category,
+            fetch_media=args.fetch_media,
+            section_indexes=section_indexes
         )
     except Exception,e:
-        dbg("EXCEPTION: %s" % e,1)
+        raise
         import pdb
         pdb.set_trace()
 

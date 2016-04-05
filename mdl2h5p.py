@@ -22,7 +22,6 @@ video_url_re = [
 h5p_library_re = re.compile(r"^(.*)\s+(\d+)\.(\d+)")
 h5p_libs_dir = "h5p_libraries"
 export_dir = "h5p_export"
-moodle_dir = "CommonSenseEcon.mbz-expanded/"
 download_extensions = ("png","jpg","docx","pptx","pdf","png","mp3","mp4")
 
 debugLevel = 3
@@ -84,68 +83,6 @@ def unescape_html(s):
     s = s.replace("&gt;", ">")
     s = s.replace("&amp;", "&")
     return s
-
-filesxml = lxml.etree.parse(os.path.join(moodle_dir,"files.xml"))
-def download_link_target(url,basedir,content_type="files",force=False):
-    """Download url target to BASEDIR/content/CONTENT_TYPE/..."""
-    content_dir = os.path.join("content",content_type)
-    dn = os.path.join(basedir,content_dir)
-    if not os.path.exists(dn):
-        os.makedirs(dn)
-    fn = os.path.basename(url)
-    dst = os.path.join(dn,fn)
-    dbg("DL %s to %s" % (fn,dst))
-    if not os.path.exists(dst) or force:
-        urlinfo = urllib2.urlparse.urlparse(url)
-        if urlinfo.scheme == "":
-            # Look up contentHash associated with fn in files.xml
-            # copy files/ab/abcd1234..., rename to fn
-            fn = os.path.basename(urllib2.unquote(url))
-            try:
-                mdlfn = filesxml.xpath("//file[filename='%s']" % fn)[0].findtext("contenthash")
-            except Exception,e:
-                import pdb
-                pdb.set_trace()
-            src = os.path.join(moodle_dir,content_type,mdlfn[0:2],mdlfn)
-            copy(src,dst)
-        else:
-            open(dst, "w").write(urllib2.urlopen(url).read())
-    # Return an absolute URL that should work for this file within funzo
-    return os.path.join(content_type,fn)
-
-
-def download_video(url,basedir,content_type="files"):
-    """Like download_link_target, but specialized for video pages"""
-    global fn
-    content_dir = os.path.join("content",content_type)
-    dn = os.path.join(basedir,content_dir)
-    if not os.path.exists(dn):
-        os.makedirs(dn)      
-    urlinfo = urllib2.urlparse.urlparse(url)
-    fn = "-".join([urlinfo.netloc] + urlinfo.path.split("/"))
-    dst = os.path.join(dn,fn)
-    dbg("DOWNLOADING VIDEO\n  URL: %s\n  DST: %s" % (url,dst),4)
-    def ydl_hooks(d):
-        global fn
-        if d['status'] == 'finished':
-            # Update to get extension provided by the downloader
-            fn = os.path.basename(d['filename'])
-    ydl_opts = {
-        "max_downloads": 1,
-        "outtmpl": dst + ".%(ext)s",
-        "progress_hooks": [ydl_hooks],
-    }
-    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-        try:
-            ret = ydl.download([url])
-        except youtube_dl.MaxDownloadsReached:
-            pass
-        except youtube_dl.DownloadError:
-            dbg("failed to DL %s" % fn)
-    relative_url = os.path.join(content_type,fn)
-    dbg("Returning: %s" % relative_url,4)
-    return relative_url
-
 
 def save_h5p(h5p,baseDir=None,force_fresh=False,fetch_media=True):
     if baseDir is None:
@@ -455,11 +392,12 @@ class _MoodleContent(object):
     # If true, render this content as a new .h5p by default
     start_new = False
     
-    def __init__(self,xmltree):
+    def __init__(self,xmltree,base_dir):
         self._children = None
         self._text = None
         self.root_xmltree = xmltree
         self.extended_xmltree = None # this gets set at the end
+        self.base_dir = base_dir
         for p in self._base_property_names:
             v = self.root_xmltree.find(p).text
             setattr(self, p, v)
@@ -469,7 +407,7 @@ class _MoodleContent(object):
         if len(self._extended_property_names) == 0:
             return
         sourcefn = os.path.join(
-            moodle_dir,
+            self.base_dir,
             self.directory,
             self.contentType+".xml"
         )
@@ -548,15 +486,15 @@ class _MoodleContent(object):
                 if ext.startswith("."):
                     ext = ext[1:]
                 if ext in download_extensions:
-                    local_fn = download_link_target(url,baseDir)
+                    local_fn = self.download_link_target(url,baseDir)
                 elif getattr(self,"title",None) is not None:
                     # CSE-specific
                     if self.title.startswith("Watch:"):
-                        local_fn = download_video(url,baseDir)
+                        local_fn = self.download_video(url,baseDir)
                 if local_fn is None:
                     for regex in video_url_re:
                         if regex.match(url):
-                            local_fn = download_video(url,baseDir)
+                            local_fn = self.download_video(url,baseDir)
                             break
                 if local_fn is None:
                     dbg("Ignoring non-downloadable URL %s" % url) 
@@ -571,6 +509,69 @@ class _MoodleContent(object):
                         n.set("target","_blank")
                     files.append(local_fn)
         return (files,content_xmltree) 
+
+    def download_link_target(self,url,basedir,content_type="files",force=False):
+        """Download url target to BASEDIR/content/CONTENT_TYPE/..."""
+        filesxml = lxml.etree.parse(os.path.join(self.base_dir,"files.xml"))
+        content_dir = os.path.join("content",content_type)
+        dn = os.path.join(basedir,content_dir)
+        if not os.path.exists(dn):
+            os.makedirs(dn)
+        fn = os.path.basename(url)
+        dst = os.path.join(dn,fn)
+        dbg("DL %s to %s" % (fn,dst))
+        if not os.path.exists(dst) or force:
+            urlinfo = urllib2.urlparse.urlparse(url)
+            if urlinfo.scheme == "":
+                # Look up contentHash associated with fn in files.xml
+                # copy files/ab/abcd1234..., rename to fn
+                fn = os.path.basename(urllib2.unquote(url))
+                fn = fn.split("$@SLASH@$")[-1]
+                try:
+                    mdlfn = filesxml.xpath("//file[filename='%s']" % fn)[0].findtext("contenthash")
+                except Exception,e:
+                    import pdb
+                    pdb.set_trace()
+                src = os.path.join(self.base_dir,content_type,mdlfn[0:2],mdlfn)
+                copy(src,dst)
+            else:
+                open(dst, "w").write(urllib2.urlopen(url).read())
+        # Return an absolute URL that should work for this file within funzo
+        return os.path.join(content_type,fn)
+
+
+    def download_video(self,url,basedir,content_type="files"):
+        """Like download_link_target, but specialized for video pages"""
+        global fn
+        content_dir = os.path.join("content",content_type)
+        dn = os.path.join(basedir,content_dir)
+        if not os.path.exists(dn):
+            os.makedirs(dn)      
+        urlinfo = urllib2.urlparse.urlparse(url)
+        fn = "-".join([urlinfo.netloc] + urlinfo.path.split("/"))
+        dst = os.path.join(dn,fn)
+        dbg("DOWNLOADING VIDEO\n  URL: %s\n  DST: %s" % (url,dst),4)
+        def ydl_hooks(d):
+            global fn
+            if d['status'] == 'finished':
+                # Update to get extension provided by the downloader
+                fn = os.path.basename(d['filename'])
+        ydl_opts = {
+            "max_downloads": 1,
+            "outtmpl": dst + ".%(ext)s",
+            "progress_hooks": [ydl_hooks],
+        }
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            try:
+                ret = ydl.download([url])
+            except youtube_dl.MaxDownloadsReached:
+                pass
+            except youtube_dl.DownloadError:
+                dbg("failed to DL %s" % fn)
+        relative_url = os.path.join(content_type,fn)
+        dbg("Returning: %s" % relative_url,4)
+        return relative_url
+
         
     def to_h5p(self):
         h5p = []
@@ -653,7 +654,7 @@ class MoodleQuiz(_MoodleModule):
         self._title = value
 
     def _get_children(self):
-        questions_fn = os.path.join(moodle_dir,"questions.xml")
+        questions_fn = os.path.join(self.base_dir,"questions.xml")
         questions_xml = lxml.etree.parse(questions_fn)
         children = []
         
@@ -769,7 +770,7 @@ class UnknownMoodleModuleException(Exception):
 class UnknownMoodleQuestionTypeException(Exception):
     pass
 
-def moodle_module_factory(module_xml):
+def moodle_module_factory(module_xml,base_dir):
     module_classes = {
         "assign": MoodleAssign,
         #"folder" : MoodleFolder,
@@ -781,7 +782,7 @@ def moodle_module_factory(module_xml):
     }
     modulename = module_xml.find("modulename").text
     if module_classes.has_key(modulename):
-        return module_classes[modulename](module_xml)
+        return module_classes[modulename](module_xml,base_dir)
     else: 
         raise UnknownMoodleModuleException("Don't know how to handle '%s' modules" % modulename)
         
@@ -826,7 +827,7 @@ def moodle2h5p(
         for i in range(0,len(activities)):
             axml = activities[i]
             try:
-                mod = moodle_module_factory(axml)
+                mod = moodle_module_factory(axml,moodle_dir)
             except UnknownMoodleModuleException,e:
                 print "\n***\n%s\n***\n" % e
                 continue
@@ -891,7 +892,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Convert a Moodle backup to H5P')
     parser.add_argument(
         "src_dir", 
-        default=moodle_dir,
         help="An uncompressed moodle backup (.mbz) dir")
     parser.add_argument(
         "dst_dir", 

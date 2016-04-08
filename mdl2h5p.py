@@ -483,11 +483,12 @@ class _MoodleContent(object):
                 url = n.get(p)
                 ext = os.path.splitext(url)[-1]
                 local_fn = None
-                if ext.startswith("."):
-                    ext = ext[1:]
-                if ext in download_extensions:
-                    local_fn = self.download_link_target(url,baseDir)
-                elif getattr(self,"title",None) is not None:
+                #if ext.startswith("."):
+                #    ext = ext[1:]
+                #if ext in download_extensions:
+                #    local_fn = self.download_link_target(url,baseDir)
+                #elif getattr(self,"title",None) is not None:
+                if getattr(self,"title",None) is not None:
                     # CSE-specific
                     if self.title.startswith("Watch:"):
                         local_fn = self.download_video(url,baseDir)
@@ -497,17 +498,16 @@ class _MoodleContent(object):
                             local_fn = self.download_video(url,baseDir)
                             break
                 if local_fn is None:
-                    dbg("Ignoring non-downloadable URL %s" % url) 
-                else: 
-                    n.set(p,local_fn)
-                    classes = n.get("class","")
-                    # CSE-specific
-                    classes = classes.replace("external","")
-                    classes += " mdl2h5p_local_content"
-                    n.set("class",classes)
-                    if n.tag == "a":
-                        n.set("target","_blank")
-                    files.append(local_fn)
+                    local_fn = self.download_link_target(url,baseDir)
+                n.set(p,local_fn)
+                classes = n.get("class","")
+                # CSE-specific
+                classes = classes.replace("external","")
+                classes += " mdl2h5p_local_content"
+                n.set("class",classes)
+                if n.tag == "a":
+                    n.set("target","_blank")
+                files.append(local_fn)
         return (files,content_xmltree) 
 
     def download_link_target(self,url,basedir,content_type="files",force=False):
@@ -525,7 +525,7 @@ class _MoodleContent(object):
             if urlinfo.scheme == "":
                 # Look up contentHash associated with fn in files.xml
                 # copy files/ab/abcd1234..., rename to fn
-                fn = os.path.basename(urllib2.unquote(url))
+                fn = os.path.basename(urllib2.unquote(urlinfo.path))
                 fn = fn.split("$@SLASH@$")[-1]
                 try:
                     mdlfn = filesxml.xpath("//file[filename='%s']" % fn)[0].findtext("contenthash")
@@ -535,7 +535,10 @@ class _MoodleContent(object):
                 src = os.path.join(self.base_dir,content_type,mdlfn[0:2],mdlfn)
                 copy(src,dst)
             else:
-                open(dst, "w").write(urllib2.urlopen(url).read())
+                try:
+                    open(dst, "w").write(urllib2.urlopen(url).read())
+                except Exception,e:
+                    dbg("Error downloading %s: %s" % (url,e))
         # Return an absolute URL that should work for this file within funzo
         return os.path.join(content_type,fn)
 
@@ -693,7 +696,7 @@ class MoodleQuiz(_MoodleModule):
                     dbg("ERROR: more random questions than non-random in category %s?" % category_id)
                     continue
             try:
-                mod = moodle_question_factory(qxml)
+                mod = moodle_question_factory(qxml,self.base_dir)
             except UnknownMoodleQuestionTypeException,e:
                 print e
                 continue
@@ -786,14 +789,14 @@ def moodle_module_factory(module_xml,base_dir):
     else: 
         raise UnknownMoodleModuleException("Don't know how to handle '%s' modules" % modulename)
         
-def moodle_question_factory(question_xml):
+def moodle_question_factory(question_xml,base_dir):
     question_classes = {
         "multichoice" : MoodleQuestionMulti,
         "essay" : MoodleQuestionEssay,
     }
     qtype = question_xml.find("qtype").text
     if question_classes.has_key(qtype):
-        return question_classes[qtype](question_xml)
+        return question_classes[qtype](question_xml,base_dir)
     else: 
         raise UnknownMoodleQuestionTypeException("Don't know how to handle '%s' quiz questions" % qtype)
 

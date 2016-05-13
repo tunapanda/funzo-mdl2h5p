@@ -27,7 +27,7 @@ download_extensions = ("png","jpg","docx","pptx","pdf","png","mp3","mp4")
 debugLevel = 3
 debugIndent = 0
 def dbg(msg,level=3):
-    """Print debig messages, depending on how the debugLevel global is set"""
+    """Print debug messages, depending on how the debugLevel global is set"""
     if level >= debugLevel:
         caller = inspect.stack()[1][3]
         sys.stderr.write("* DBG%s: %s: %s%s\n" % (

@@ -14,7 +14,7 @@ import urllib2
 import uuid
 import youtube_dl
 
-# Regexes that match URLs which should be treated as video 
+# Regexes that match URLs which should be treated as video
 # download sites.
 video_url_re = [
     re.compile(r".*criticalcommons\.org.*clips/.*"),
@@ -47,7 +47,7 @@ def json_pp(content):
             separators=(',', ': ')
         )
 
-# credit: http://pythoncentral.io/how-to-recursively-copy-a-directory-folder-in-python/ 
+# credit: http://pythoncentral.io/how-to-recursively-copy-a-directory-folder-in-python/
 def copy(src, dst):
     """Recursively copy src to dst (can also copy regular files)"""
     try:
@@ -58,7 +58,7 @@ def copy(src, dst):
             shutil.copy(src, dst)
         else:
             print('Directory not copied. Error: %s' % e)
-       
+
 def mkdir(path):
     """Recursively creates a directory, similar to *nix `mkdir -p` command"""
     if os.path.exists(path):
@@ -77,7 +77,7 @@ def mkdir(path):
         basedir = os.path.join(basedir,dname)
         dbg("Creating %s" % basedir)
         os.mkdir(basedir)
-       
+
 def unescape_html(s):
     s = s.replace("&lt;", "<")
     s = s.replace("&gt;", ">")
@@ -94,11 +94,11 @@ def save_h5p(h5p,baseDir=None,force_fresh=False,fetch_media=True):
         shutil.rmtree(baseDir)
     if not os.path.exists(baseDir):
         dbg("Creating H5P base dir %s" % baseDir, 4)
-        mkdir(baseDir) 
+        mkdir(baseDir)
     dirsync.sync(
-        h5p_libs_dir, 
-        baseDir, 
-        "sync", 
+        h5p_libs_dir,
+        baseDir,
+        "sync",
         ignore=[
             r".*/\.git/",
             r".*\.swp",
@@ -113,40 +113,40 @@ def save_h5p(h5p,baseDir=None,force_fresh=False,fetch_media=True):
     content_fh.close()
     dbg("Populating h5p.json...")
     # TODO: copy required libraries (`preloadedDependencies`) in
-    # h5p_json from some known location into baseDir? 
+    # h5p_json from some known location into baseDir?
     h5p_fh = open(os.path.join(baseDir,"h5p.json"),"w")
     h5p_fh.write(h5p.h5p_json)
     h5p_fh.close()
     dbg("DONE.")
 
-class H5PCoursePresentation(object): 
+class H5PCoursePresentation(object):
     library = "H5P.CoursePresentation 1.7"
     def __init__(self, title):
         self.title = title
         self._content_dict = None
         self._package_dict = None
         self.slides = []
-        
+
     def fetch_media(self,baseDir,recursive=True):
         res = []
         for child_h5p in self._get_slides():
             res += child_h5p.fetch_media(baseDir,recursive)
         return res
-        
+
     def add_slides(self, child_h5ps):
         if hasattr(child_h5ps,"__iter__"):
             self.slides += child_h5ps
         else:
             self.slides.append(child_h5p)
-    
+
     def _get_slides(self):
         #return self.src.to_h5p()
         return self.slides
-        
+
     @property
     def h5p_json(self):
         return json_pp(self.package_dict)
-        
+
     @property
     def package_dict(self):
         if self._package_dict is None:
@@ -173,20 +173,20 @@ class H5PCoursePresentation(object):
                   "minorVersion": minorVersion
                 })
         return self._package_dict
-            
+
     @property
     def content_json(self):
-        return json_pp(self.content)                
-            
+        return json_pp(self.content)
+
     @property
     def content(self):
         if self._content_dict is None:
             self._content_dict = self._generate_content_dict()
         return self._content_dict
-           
+
     def _gen_subContentId(self):
         return str(uuid.uuid1())
-    
+
     def _generate_slide_dict(self,child_h5p):
         return {
                 "elements": [
@@ -196,7 +196,7 @@ class H5PCoursePresentation(object):
                     "width": 98,
                     "height": 98,
                     "action": {
-                        "library": child_h5p.library, 
+                        "library": child_h5p.library,
                         "params" : child_h5p.content,
                         "subContentId": self._gen_subContentId(),
                     },
@@ -209,7 +209,7 @@ class H5PCoursePresentation(object):
                 ],
                 "keywords": []
               }
-    
+
     def _generate_content_dict(self):
         content = {}
         content["presentation"] = {}
@@ -222,7 +222,7 @@ class H5PCoursePresentation(object):
         #            "width": 98,
         #            "height": 98,
         #            "action": {
-        #                "library": "H5P.AdvancedText 1.1", 
+        #                "library": "H5P.AdvancedText 1.1",
         #                "params" : {
         #                    "text" : "<h1>"+self.title+"</h1>"
         #                },
@@ -240,7 +240,7 @@ class H5PCoursePresentation(object):
         for child_h5p in self._get_slides():
             slides.append(self._generate_slide_dict(child_h5p))
         content["presentation"]["slides"] = slides
-        
+
         content["l10n"] = {
             "slide": "Slide",
             "yourScore": "Your Score",
@@ -293,31 +293,31 @@ class _H5PContent(object):
         self.src     = src
         if auto_save:
             save_h5p(self,force_fresh=force_fresh)
-        
+
     def __repr__(self):
         return self.content_json
-        
+
     @property
     def title(self):
         return self.src.title
-            
+
     @property
     def content_json(self):
-        return json_pp(self.content) 
-            
+        return json_pp(self.content)
+
     @property
     def content(self):
         if self._content_dict is None:
             self._content_dict = self._generate_content_dict()
         return self._content_dict
-        
+
     def fetch_media(self,baseDir,recursive=True):
         return self.src.fetch_media(baseDir,recursive)
-    
+
     # Override in subclasses!
     def _generate_content_dict(self):
         return {}
-    
+
 class H5PAdvancedText(_H5PContent):
     library = "H5P.AdvancedText 1.1"
     def _generate_content_dict(self):
@@ -325,7 +325,7 @@ class H5PAdvancedText(_H5PContent):
             "text": self.src.text,
           }
         return content
-    
+
 # TODO:
 class H5PEssayQuestion(_H5PContent):
     library = "H5P.EssayQuestion 1.1"
@@ -351,7 +351,7 @@ class H5PMultipleChoice(_H5PContent):
                 },
                 "text": a.text
               })
-            
+
         content = {
             "media": {
               "params": {}
@@ -391,7 +391,7 @@ class _MoodleContent(object):
     _content_nodes = []
     # If true, render this content as a new .h5p by default
     start_new = False
-    
+
     def __init__(self,xmltree,base_dir):
         self._children = None
         self._text = None
@@ -402,7 +402,7 @@ class _MoodleContent(object):
             v = self.root_xmltree.find(p).text
             setattr(self, p, v)
         self._set_extended_properties()
-        
+
     def _set_extended_properties(self):
         if len(self._extended_property_names) == 0:
             return
@@ -416,14 +416,14 @@ class _MoodleContent(object):
         for p in self._extended_property_names:
             content = sourcexml.find(p).text
             setattr(self, p, content)
-                
+
     def __repr__(self):
         title = "%s/%s" % (type(self),self.contentType)
         if self.title is not None:
             title += " %s" % self.title
         title += " with %s children" % len(self.children)
         return title
-    
+
     @property
     def title(self):
         if hasattr(self,"_title"):
@@ -432,21 +432,21 @@ class _MoodleContent(object):
             return self.name
         else:
             return None
-    
+
     @title.setter
     def title(self,value):
         self._title = value
-         
+
     @property
     def children(self):
         if self._children is None:
             self._children = self._get_children()
-        return self._children  
-    
+        return self._children
+
     def _get_children(self):
         return []
-        
-    
+
+
     def fetch_media(self,baseDir,recursive=True):
         fetched_files = []
         for n in self._content_nodes:
@@ -455,8 +455,8 @@ class _MoodleContent(object):
                 continue
             content_xmltree = lxml.etree.HTML("<html>%s</html>" % content)
             (files,revised_xmltree) = self._fetch_media(baseDir,content_xmltree)
-            
-            # The above probably updated link targets, so we 
+
+            # The above probably updated link targets, so we
             # need to update the stored xmltree. To do this, we must
             # strip out the <html><body> that was added to the original
             # self.content to make it parseable by lxml
@@ -464,13 +464,13 @@ class _MoodleContent(object):
             for e in revised_xmltree[0][:]:
                 revised_content += lxml.etree.tostring(e)
             setattr(self,n,revised_content)
-            
+
             fetched_files += files
         if recursive:
             for c in self.children:
                 fetched_files += c.fetch_media(baseDir=baseDir,recursive=recursive)
         return fetched_files
-    
+
     def _fetch_media(self,baseDir,content_xmltree):
         files = []
         if content_xmltree is None:
@@ -508,7 +508,7 @@ class _MoodleContent(object):
                 if n.tag == "a":
                     n.set("target","_blank")
                 files.append(local_fn)
-        return (files,content_xmltree) 
+        return (files,content_xmltree)
 
     def download_link_target(self,url,basedir,content_type="files",force=False):
         """Download url target to BASEDIR/content/CONTENT_TYPE/..."""
@@ -549,7 +549,7 @@ class _MoodleContent(object):
         content_dir = os.path.join("content",content_type)
         dn = os.path.join(basedir,content_dir)
         if not os.path.exists(dn):
-            os.makedirs(dn)      
+            os.makedirs(dn)
         urlinfo = urllib2.urlparse.urlparse(url)
         fn = "-".join([urlinfo.netloc] + urlinfo.path.split("/"))
         dst = os.path.join(dn,fn)
@@ -575,7 +575,7 @@ class _MoodleContent(object):
         dbg("Returning: %s" % relative_url,4)
         return relative_url
 
-        
+
     def to_h5p(self):
         h5p = []
         h5p.append(self._h5pClass(self))
@@ -583,7 +583,7 @@ class _MoodleContent(object):
         for child in self.children:
             h5p += child.to_h5p()
         return h5p
-        
+
     @property
     def text(self):
         if self._text is None:
@@ -592,7 +592,7 @@ class _MoodleContent(object):
                 self._text += "<h1>%s</h1>" % self.title
             self._text += "\n".join([ getattr(self,c) for c in self._content_nodes if getattr(self,c,None) is not None ])
         return self._text
-    
+
 
 class MoodleSection(_MoodleContent):
     contentType = "section"
@@ -614,15 +614,15 @@ class MoodleSection(_MoodleContent):
                 mod = _MoodleModule(axml)
             children.append(mod)
         return children
-            
+
 class _MoodleModule(_MoodleContent):
     _base_property_names = _MoodleContent._base_property_names + ["moduleid","modulename"]
     _h5pClass = H5PAdvancedText
-    
+
     @property
     def contentType(self):
         return self.modulename
-    
+
 class MoodlePage(_MoodleModule):
     _extended_property_names = ["intro","content"]
     _content_nodes = ["intro","content"]
@@ -647,11 +647,11 @@ class MoodleQuiz(_MoodleModule):
     _extended_property_names = ["name","intro"]
     _content_nodes = ["intro"]
     start_new = True
-    
+
     @property
     def title(self):
         return "Quiz: %s" % self.name
-    
+
     @title.setter
     def title(self,value):
         self._title = value
@@ -660,26 +660,26 @@ class MoodleQuiz(_MoodleModule):
         questions_fn = os.path.join(self.base_dir,"questions.xml")
         questions_xml = lxml.etree.parse(questions_fn)
         children = []
-        
-        # Store a list of questions explicitly associated with the 
+
+        # Store a list of questions explicitly associated with the
         # quiz so we know not to substitute them for questions with
         # qtype "random"
-        used_question_IDs = []  
+        used_question_IDs = []
         for qixml in self.extended_xmltree.xpath(".//question_instance"):
             qid = qixml.find("questionid").text
             used_question_IDs.append(qid)
-            
+
         # This will store questions that...
         # - Are not explicitly associated with the quiz, and
         # - Do not have qtype "random"
         available_questions_by_category = {}
-        
+
         for qixml in self.extended_xmltree.xpath(".//question_instance"):
             qid = qixml.find("questionid").text
             qxml = questions_xml.xpath(
                 "/question_categories/question_category/questions/question[@id=%s]" % qid
             )[0]
-              
+
             if qxml.find("qtype").text == "random":
                 category_xml = qxml.xpath(
                     "ancestor::question_category"
@@ -702,41 +702,41 @@ class MoodleQuiz(_MoodleModule):
                 continue
             children.append(mod)
         return children
-        
+
 class _MoodleQuestion(_MoodleModule):
     _base_property_names = ["name","questiontext","qtype"]
     _content_nodes = ["intro","questiontext"]
     #_questionText = None
     _h5pClass = None # replace in subclasses
-        
-    #@property 
+
+    #@property
     #def questionText(self):
     #    if self._questionText is None:
     #        self._questionText = self.root_xmltree.find("questiontext").text
     #    return self._questionText
-    
+
     @property
     def contentType(self):
         return self.qtype
-        
+
     @property
     def text(self):
         if self._text is None:
             self._text = ""
             self._text += "\n".join([ getattr(self,c) for c in self._content_nodes if getattr(self,c,None) is not None ])
         return self._text
-        
-    
+
+
     def __repr__(self):
         return "Question" #"Question from XML:\n%s" % lxml.etree.tostring(self.root_xmltree)
-    
+
 class MoodleQuestionMulti(_MoodleQuestion):
     _h5pClass = H5PMultipleChoice
-    
+
     @property
     def answers(self):
         return [ MoodleQuestionAnswer(x) for x in self.root_xmltree.xpath(".//answers/answer") ]
-    
+
 class MoodleQuestionEssay(_MoodleQuestion):
     _h5pClass = H5PEssayQuestion
 
@@ -749,13 +749,13 @@ class MoodleQuestionAnswer(object):
         self.root_xmltree = xmlroot
         self._text = None
         self._correct = None
-        
+
     @property
     def text(self):
         if self._text is None:
             self._text = self.root_xmltree.find("answertext").text
         return self._text
-        
+
     @property
     def correct(self):
         if self._correct is None:
@@ -765,7 +765,7 @@ class MoodleQuestionAnswer(object):
                 self._correct = False
         return self._correct
 
-# Factory function for generating an object of the appropriate class, 
+# Factory function for generating an object of the appropriate class,
 # given the xml node of a Moodle <activity> from moodle_backup.xml
 class UnknownMoodleModuleException(Exception):
     pass
@@ -786,9 +786,9 @@ def moodle_module_factory(module_xml,base_dir):
     modulename = module_xml.find("modulename").text
     if module_classes.has_key(modulename):
         return module_classes[modulename](module_xml,base_dir)
-    else: 
+    else:
         raise UnknownMoodleModuleException("Don't know how to handle '%s' modules" % modulename)
-        
+
 def moodle_question_factory(question_xml,base_dir):
     question_classes = {
         "multichoice" : MoodleQuestionMulti,
@@ -797,7 +797,7 @@ def moodle_question_factory(question_xml,base_dir):
     qtype = question_xml.find("qtype").text
     if question_classes.has_key(qtype):
         return question_classes[qtype](question_xml,base_dir)
-    else: 
+    else:
         raise UnknownMoodleQuestionTypeException("Don't know how to handle '%s' quiz questions" % qtype)
 
 def moodle2h5p(
@@ -840,7 +840,7 @@ def moodle2h5p(
                 h5p_toplevels.append(H5PCoursePresentation(title))
                 force_new = True
             # New toplevel for 1st activity, or after a start_new
-            elif force_new: 
+            elif force_new:
                 title = "Watch, Read, and Listen"
                 h5p_toplevels.append(H5PCoursePresentation(title))
                 force_new = False
@@ -863,7 +863,7 @@ def moodle2h5p(
               "permalink": os.path.basename(moduleDir)
             })
             save_h5p(
-                h, 
+                h,
                 baseDir=moduleDir,
                 fetch_media=fetch_media
             )
@@ -871,7 +871,7 @@ def moodle2h5p(
             courseBaseDir,
             "content.json"
         )
-        
+
         # TODO: This shouldn't be necessary, but for
         # some reason if you don't remove the old file,
         # new content gets appended instead of (over)writing
@@ -888,16 +888,16 @@ def moodle2h5p(
               "modules": course_modules
             }
         ))
-    
+
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='Convert a Moodle backup to H5P')
     parser.add_argument(
-        "src_dir", 
+        "src_dir",
         help="An uncompressed moodle backup (.mbz) dir")
     parser.add_argument(
-        "dst_dir", 
+        "dst_dir",
         default=export_dir,
         help="Directory to output converted content")
     parser.add_argument(
@@ -909,12 +909,12 @@ if __name__ == "__main__":
         default=None,
         help="Comma-separated list of section numbers (starting at 0) to convert")
     parser.add_argument(
-        "--fetch_media", "-m", 
+        "--fetch_media", "-m",
         dest="fetch_media",
         action="store_true",
         help="Download linked media and convert links to local targets for offline viewing")
     parser.add_argument(
-        "--no-fetch_media", "-M", 
+        "--no-fetch_media", "-M",
         dest="fetch_media",
         action="store_false",
         help="Opposite of --fetch-media")

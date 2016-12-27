@@ -24,6 +24,9 @@ h5p_libs_dir = "h5p_libraries"
 export_dir = "h5p_export"
 download_extensions = ("png","jpg","docx","pptx","pdf","png","mp3","mp4")
 
+# This will be a disct of lib locations, populated on first access
+h5p_libs = None
+
 debugLevel = 3
 debugIndent = 0
 def dbg(msg,level=3):
@@ -84,6 +87,27 @@ def unescape_html(s):
     s = s.replace("&amp;", "&")
     return s
 
+def get_h5p_lib_info(libname):
+    global h5p_libs
+    if h5p_libs is None:
+        h5p_libs = {}
+        print "XXX checking %s" % h5p_libs_dir
+        for d in os.listdir(h5p_libs_dir):
+            dpath = os.path.join(h5p_libs_dir, d)
+            if not os.path.isdir(dpath):
+                continue
+            if not d.startswith("H5P."):
+                continue
+            print "XXX " + d
+            (lib, ver) = re.match("^H5P\.(.+?)-(.*)$", d).groups()
+            h5p_libs[lib] = ("H5P." + lib, ver, dpath)
+            print "XXX ADded {} = {}".format(lib,h5p_libs[lib])
+    return h5p_libs[libname]
+
+def get_h5p_lib_string(libname):
+    (name, ver, path) = get_h5p_lib_info(libname)
+    return "{} {}".format(name, ver)
+
 def save_h5p(h5p,baseDir=None,force_fresh=False,fetch_media=True):
     if baseDir is None:
         baseDir = os.path.join(export_dir,h5p.title)
@@ -118,30 +142,30 @@ def save_h5p(h5p,baseDir=None,force_fresh=False,fetch_media=True):
     h5p_fh.write(h5p.h5p_json)
     h5p_fh.close()
     dbg("DONE.")
+    
 
-class H5PCoursePresentation(object):
-    library = "H5P.CoursePresentation 1.7"
+class _H5PTopLevel(object):
     def __init__(self, title):
         self.title = title
         self._content_dict = None
         self._package_dict = None
-        self.slides = []
+        self.children = []
 
     def fetch_media(self,baseDir,recursive=True):
         res = []
-        for child_h5p in self._get_slides():
+        for child_h5p in self._get_children():
             res += child_h5p.fetch_media(baseDir,recursive)
         return res
 
-    def add_slides(self, child_h5ps):
+    def add_children(self, child_h5ps):
         if hasattr(child_h5ps,"__iter__"):
-            self.slides += child_h5ps
+            self.children += child_h5ps
         else:
-            self.slides.append(child_h5p)
+            self.children.append(child_h5p)
 
-    def _get_slides(self):
+    def _get_children(self):
         #return self.src.to_h5p()
-        return self.slides
+        return self.children
 
     @property
     def h5p_json(self):
@@ -157,10 +181,31 @@ class H5PCoursePresentation(object):
                   "embedTypes": [
                     "div"
                   ],
-                  "preloadedDependencies": []
+                  "preloadedDependencies": [
+                    { "machineName": "FontAwesome",
+                      "majorVersion": "4",
+                      "minorVersion": "5",
+                    },
+                    { "machineName": "EmbeddedJS",
+                      "majorVersion": "1",
+                      "minorVersion": "0",
+                    },
+                    { "machineName": "H5P.Question",
+                      "majorVersion": "1",
+                      "minorVersion": "2",
+                    },
+                    { "machineName": "H5P.JoubelUI",
+                      "majorVersion": "1",
+                      "minorVersion": "2",
+                    },
+                    { "machineName": "H5P.Video",
+                      "majorVersion": "1",
+                      "minorVersion": "3",
+                    },
+                  ]
             }
             lib_strings = set()
-            for h5p in [self] + self.slides:
+            for h5p in [self] + self.children:
                 lib_string = getattr(h5p,"library",None)
                 if lib_string is None:
                     continue
@@ -186,8 +231,11 @@ class H5PCoursePresentation(object):
 
     def _gen_subContentId(self):
         return str(uuid.uuid1())
+        
 
-    def _generate_slide_dict(self,child_h5p):
+class H5PCoursePresentation(_H5PTopLevel):
+    library = get_h5p_lib_string("CoursePresentation")
+    def _generate_child_dict(self,child_h5p):
         return {
                 "elements": [
                   {
@@ -237,8 +285,8 @@ class H5PCoursePresentation(object):
         #        ],
         #        "keywords": []
         #      }]
-        for child_h5p in self._get_slides():
-            slides.append(self._generate_slide_dict(child_h5p))
+        for child_h5p in self._get_children():
+            slides.append(self._generate_child_dict(child_h5p))
         content["presentation"]["slides"] = slides
 
         content["l10n"] = {
@@ -286,6 +334,82 @@ class H5PCoursePresentation(object):
             "hideSummarySlide": False
           }
         return content
+        
+        
+class H5PQuestionSet(_H5PTopLevel):
+    library = get_h5p_lib_string("QuestionSet")
+    def _generate_child_dict(self,child_h5p):
+        return {
+            "library": child_h5p.library,
+            "params" : child_h5p.content,
+            "subContentId": self._gen_subContentId()
+        }
+
+    def _generate_content_dict(self):
+    	children = self._get_children()
+        content = {
+            "disableBackwardsNavigation": False,
+            "override": {},
+            "passPercentage": 50,
+            "poolSize": len(children),
+            "progressType": "dots",
+            "randomQuestions": False,
+            "l10n": {
+                "checkAnswer": "Check",
+                "correctAnswerMessage": "Correct answer",
+                "falseText": "False",
+                "score": "You got @score of @total points",
+                "showSolutionButton": "Show solution",
+                "trueText": "True",
+                "tryAgain": "Retry",
+                "wrongAnswerMessage": "Wrong answer"
+            },
+            "override": {
+                "activeSurface": False,
+                "overrideButtons": False,
+                "overrideShowSolutionButton": False,
+                "overrideRetry": False,
+                "hideSummarySlide": False
+            },
+            "endGame": {
+                "failComment": "Have another try!",
+                "failGreeting": "You did not pass this time.",
+                "finishButtonText": "Finish",
+                "message": "Your result:",
+                "noResultMessage": "Finished",
+                "retryButtonText": "Retry",
+                "scoreString": "You got @score of @total points",
+                "showAnimations": False,
+                "showResultPage": True,
+                "skipButtonText": "Skip video",
+                "skippable": False,
+                "solutionButtonText": "Show solution",
+                "successComment": "You did very well!",
+                "successGreeting": "Congratulations!"
+            },
+            "introPage": {
+                "introduction": "",
+                "showIntroPage": False,
+                "startButtonText": "Start Quiz"
+            },
+            "texts": {
+                "answeredText": "Answered",
+                "currentQuestionText": "Current question",
+                "finishButton": "Finish",
+                "jumpToQuestion": "Question %d of %total",
+                "nextButton": "Next question",
+                "prevButton": "Previous question",
+                "questionLabel": "Question",
+                "readSpeakerProgress": "Question @current of @total",
+                "textualProgress": "Question: @current of @total questions",
+                "unansweredText": "Unanswered"
+            }
+        }
+        content["questions"] = []
+        for child_h5p in children:
+            content["questions"].append(self._generate_child_dict(child_h5p))
+        return content
+    
 
 class _H5PContent(object):
     def __init__(self,src,auto_save=False,force_fresh=False):
@@ -319,7 +443,7 @@ class _H5PContent(object):
         return {}
 
 class H5PAdvancedText(_H5PContent):
-    library = "H5P.AdvancedText 1.1"
+    library = get_h5p_lib_string("AdvancedText")
     def _generate_content_dict(self):
         content = {
             "text": self.src.text,
@@ -328,7 +452,7 @@ class H5PAdvancedText(_H5PContent):
 
 # TODO:
 class H5PEssayQuestion(_H5PContent):
-    library = "H5P.EssayQuestion 1.1"
+    library = get_h5p_lib_string("EssayQuestion")
     def _generate_content_dict(self):
         content = {
             "question": self.src.text,
@@ -336,7 +460,7 @@ class H5PEssayQuestion(_H5PContent):
         return content
 
 class H5PMultipleChoice(_H5PContent):
-    library = "H5P.MultiChoice 1.5"
+    library = get_h5p_lib_string("MultiChoice")
     def _generate_content_dict(self):
         true = True
         false = False
@@ -377,7 +501,6 @@ class H5PMultipleChoice(_H5PContent):
             "question": self.src.text
         }
         return content
-
 
 
 class _MoodleContent(object):
@@ -472,7 +595,7 @@ class _MoodleContent(object):
         return fetched_files
 
     def _fetch_media(self,baseDir,content_xmltree):
-        files = []
+        files = [b]
         if content_xmltree is None:
             return files
         links = {}
@@ -646,6 +769,7 @@ class MoodleForum(_MoodleModule):
 class MoodleQuiz(_MoodleModule):
     _extended_property_names = ["name","intro"]
     _content_nodes = ["intro"]
+    _container = H5PQuestionSet
     start_new = True
 
     @property
@@ -822,9 +946,9 @@ def moodle2h5p(
     for idx in section_indexes:
         s = sections[idx]
         section_id = s.find("sectionid").text
-        #title = s.find("title").text
-        #h5p_toplevels = [H5PCoursePresentation(title)]
-        h5p_toplevels = []
+        title = s.find("title").text
+        h5p_toplevels = [H5PCoursePresentation(title)]
+        #h5p_toplevels = []
         activities = s.xpath("//activities/activity[sectionid = %s]" % section_id)
         force_new = True
         for i in range(0,len(activities)):
@@ -834,17 +958,22 @@ def moodle2h5p(
             except UnknownMoodleModuleException,e:
                 print "\n***\n%s\n***\n" % e
                 continue
-            if mod.start_new:
+            toplevel = getattr(mod, "_container", H5PCoursePresentation)
+            if i > 0:
+                start_new = mod.start_new or (type(h5p_toplevels[-1]) != toplevel)
+            else:
+                start_new = True
+            if start_new:
                 # New toplevel for this activity
                 title = mod.title
-                h5p_toplevels.append(H5PCoursePresentation(title))
+                h5p_toplevels.append(toplevel(title))
                 force_new = True
             # New toplevel for 1st activity, or after a start_new
             elif force_new:
                 title = "Watch, Read, and Listen"
-                h5p_toplevels.append(H5PCoursePresentation(title))
+                h5p_toplevels.append(toplevel(title))
                 force_new = False
-            h5p_toplevels[-1].add_slides(mod.to_h5p())
+            h5p_toplevels[-1].add_children(mod.to_h5p())
         courseBaseDir = os.path.join(export_dir,course_name)
         moduleBaseDir = os.path.join(courseBaseDir,"modules")
         course_modules = []

@@ -1,0 +1,86 @@
+{
+  "semantics": [
+    {
+      "label": "Titre"
+    },
+    {
+      "label": "Consigne",
+      "default": "Par deux, faites des phrases en employant les expressions ci-dessous."
+    },
+    {
+      "label": "Dialogue",
+      "entity": "dialogue",
+      "field": {
+        "label": "Question",
+        "fields": [
+          {
+            "label": "Question",
+            "description": "Indice pour la première partie du dialogue"
+          },
+          {
+            "label": "Réponse",
+            "description": "Indice pour la seconde partie du dialogue"
+          },
+          {
+            "label": "Image",
+            "description": "Image facultative pour la carte. (Une carte peut contenir une image seule, un texte seul ou les deux combinés)"
+          },
+          {
+            "label": "Fichier audio"
+          },
+          {
+            "label": "Indices",
+            "fields": [
+              {
+                "label": "Indice pour la question",
+                "description": "Indice pour la première partie du dialogue"
+              },
+              {
+                "label": "Indice pour la réponse",
+                "description": "Indice pour la seconde partie du dialogue"
+              }
+            ]
+          }
+        ]
+      }
+    },
+     {
+      "label": "Behavioural settings",
+      "description": "These options will let you control how the task behaves.",
+      "fields": [
+        {
+          "label": "Enable \"Retry\" button"
+        },
+        {
+          "label": "Disable backwards navigation",
+          "description": "This option will only allow you to move forward with Dialog Cards"
+        },
+        {
+          "label": "Scale the text to fit inside the card",
+          "description": "Unchecking this option will make the card adapt its size to the size of the text"
+        }
+      ]
+    },
+    {
+      "label": "Texte pour le bouton \"Retourner\"",
+      "default": "Retourner"
+    },
+    {
+      "label": "Texte pour le bouton \"Suivant\"",
+      "default": "Suivant"
+    },
+    {
+      "label": "Texte pour le bouton \"Précédent\"",
+      "default": "Précédent"
+    },
+    {
+      "label": "Texte pour le bouton \"Recommencer\"",
+      "default": "Recommencer"
+    },
+    {
+      "label": "Texte de progression",
+      "description": "Les variables disponibles sont @card and @total.",
+      "default": "Carte @card sur @total"
+    }
+  ]
+}
